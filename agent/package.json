@@ -1,0 +1,21 @@
+{
+  "name": "snappylit-agent",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsup src/index.ts src/serverHandlers.ts --out-dir ../dist/agent --format cjs --clean",
+    "typecheck": "tsc --noEmit",
+    "start": "node ../dist/agent/index.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "cheerio": "^1.2.0",
+    "firebase-admin": "^13.0.0",
+    "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'txrroy@gmail.com'
+        ];
+    }
+
+    function isEditor() {
+      return isAdmin();
+    }
+
+    match /articles/{articleId} {
+      // Consumers can read published articles; editors/admins can read all (including drafts/rejected)
+      allow read: if resource.data.status == 'published' || isEditor();
+      // Only authenticated editors/admins can update/delete articles from the dashboard
+      allow write: if isEditor();
+    }
+
+    match /config/{docId} {
+      allow read, write: if isEditor();
+    }
+
+    match /policy_versions/{versionId} {
+      allow read, write: if isEditor();
+    }
+  }
+}
