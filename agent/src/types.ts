@@ -47,6 +47,10 @@ export type ArticleFlag =
   | 'GRAPHIC_DETAIL'
   | 'TOO_COMPLEX';
 
+export type AutonomyLevel = 'ask_me' | 'fix_then_show' | 'fix_automatically';
+
+export type FlagAutonomyConfig = Record<ArticleFlag, AutonomyLevel>;
+
 export interface JudgeOutput {
   confidence_score: number;
   pass: boolean;
@@ -57,7 +61,7 @@ export interface JudgeOutput {
 }
 
 export interface DecisionRecord {
-  action: 'edited' | 'approved' | 'rejected' | 'regenerated';
+  action: 'edited' | 'approved' | 'rejected' | 'regenerated' | 'unpublished';
   at: string;
 }
 
@@ -69,6 +73,28 @@ export interface PipelineTraceStep {
   status: 'ok' | 'fallback' | 'warning' | 'error';
   summary: string;
   details?: Record<string, string | number | boolean>;
+}
+
+export interface PipelineRunLog {
+  id: string;
+  date: string;
+  at: string;
+  raw_headlines_count: number;
+  merged_events_count: number;
+  picked_count: number;
+  target_count: number;
+  full_text_count: number;
+  snippet_fallback_count: number;
+  ready_count: number;
+  needs_check_count: number;
+  could_not_verify_count: number;
+  shortfall_reason?: string;
+  dropped_candidates?: {
+    title: string;
+    source: string;
+    source_count: number;
+    drop_reason: string;
+  }[];
 }
 
 export type PolicyTone = 'calm_neutral' | 'curious_educator' | 'concise_wire';
@@ -88,6 +114,7 @@ export interface PolicySettings {
   max_per_topic: number;
   max_per_region: number;
   max_market_stories: number;
+  flag_autonomy?: FlagAutonomyConfig;
 }
 
 export interface AgentInstructionsSnapshot {
@@ -137,6 +164,8 @@ export interface ArticleDocument {
   edited_at?: string | null;
   approved_at?: string | null;
   rejected_at?: string | null;
+  source_checked?: boolean;
+  auto_retried_complexity?: boolean;
   decision_history?: DecisionRecord[];
   prompt_version?: string;
   instructions_snapshot?: AgentInstructionsSnapshot;

@@ -297,24 +297,6 @@ export function useDraftArticles(enabled = true): UseDraftArticlesResult {
     });
   }, []);
 
-  const revertToDraft = useCallback(async (id: string) => {
-    const ref = doc(db, 'articles', id);
-    await updateDoc(ref, {
-      status: 'draft',
-      approved_by: null,
-      approved_at: null,
-      rejected_at: null,
-      rejection_reason: null,
-    });
-  }, []);
-
-  const confirmKidsTopic = useCallback(async (id: string, confirmed: boolean) => {
-    const ref = doc(db, 'articles', id);
-    await updateDoc(ref, {
-      kids_topic_confirmed: confirmed,
-    });
-  }, []);
-
   return {
     drafts,
     loading,
@@ -340,7 +322,9 @@ interface UseAdminArticlesResult {
   batchRejectArticles: (ids: string[]) => Promise<void>;
   rejectArticle: (id: string, reason?: string) => Promise<void>;
   revertToDraft: (id: string) => Promise<void>;
+  unpublishArticle: (id: string) => Promise<void>;
   confirmKidsTopic: (id: string, confirmed: boolean) => Promise<void>;
+  confirmSourceChecked: (id: string, checked: boolean) => Promise<void>;
 }
 
 /**
@@ -444,10 +428,28 @@ export function useAdminArticles(enabled = true): UseAdminArticlesResult {
     });
   }, []);
 
+  const unpublishArticle = useCallback(async (id: string) => {
+    const now = new Date().toISOString();
+    const ref = doc(db, 'articles', id);
+    await updateDoc(ref, {
+      status: 'draft',
+      approved_by: null,
+      approved_at: null,
+      decision_history: arrayUnion({ action: 'unpublished', at: now }),
+    });
+  }, []);
+
   const confirmKidsTopic = useCallback(async (id: string, confirmed: boolean) => {
     const ref = doc(db, 'articles', id);
     await updateDoc(ref, {
       kids_topic_confirmed: confirmed,
+    });
+  }, []);
+
+  const confirmSourceChecked = useCallback(async (id: string, checked: boolean) => {
+    const ref = doc(db, 'articles', id);
+    await updateDoc(ref, {
+      source_checked: checked,
     });
   }, []);
 
@@ -491,7 +493,9 @@ export function useAdminArticles(enabled = true): UseAdminArticlesResult {
     batchRejectArticles,
     rejectArticle,
     revertToDraft,
+    unpublishArticle,
     confirmKidsTopic,
+    confirmSourceChecked,
   };
 }
 

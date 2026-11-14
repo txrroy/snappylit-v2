@@ -16,8 +16,9 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, shrink-to-fit=no"
+          content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
         />
+        <meta name="theme-color" content="#141821" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="preconnect"
@@ -28,6 +29,7 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="stylesheet" href={WORK_SANS_STYLESHEET} />
         <link rel="stylesheet" href={CABINET_GROTESK_STYLESHEET} />
         <ScrollViewStyleReset />
+        <style>{`html, body { background-color: #141821; }`}</style>
       </head>
       <body>{children}</body>
     </html>

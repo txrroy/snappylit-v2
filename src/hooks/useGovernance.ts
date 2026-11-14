@@ -15,6 +15,7 @@ import type {
   ActivePolicyDoc,
   AgentInstructionsSnapshot,
   ArticleFlag,
+  FlagAutonomyConfig,
   JudgeClaim,
   JudgeScores,
   PipelineTraceStep,
@@ -24,6 +25,14 @@ import type {
   RssSourceConfig,
 } from '@/types/article';
 
+export const DEFAULT_FLAG_AUTONOMY: FlagAutonomyConfig = {
+  TOO_COMPLEX: 'fix_automatically',
+  ONE_SIDED: 'fix_then_show',
+  LOADED_LANGUAGE: 'fix_then_show',
+  GRAPHIC_DETAIL: 'ask_me',
+  SNIPPET_ONLY: 'ask_me',
+};
+
 export const DEFAULT_POLICY_SETTINGS: PolicySettings = {
   reading_level: 'grade 6',
   target_headline_words: 10,
@@ -32,6 +41,7 @@ export const DEFAULT_POLICY_SETTINGS: PolicySettings = {
   max_per_topic: 4,
   max_per_region: 5,
   max_market_stories: 1,
+  flag_autonomy: DEFAULT_FLAG_AUTONOMY,
 };
 
 export const LOCKED_CORE_SUMMARY =
@@ -148,6 +158,7 @@ export async function regenerateDraftRequest(params: {
   readingLevel: ReadingLevel;
   targetSummaryWords: number;
   redirectInstructions: string;
+  tryAlternateSource?: boolean;
   idToken: string;
 }): Promise<RegenerateResponse> {
   const res = await fetch(`${getApiBaseUrl()}/api/regenerate`, {
@@ -161,6 +172,7 @@ export async function regenerateDraftRequest(params: {
       readingLevel: params.readingLevel,
       targetSummaryWords: params.targetSummaryWords,
       redirectInstructions: params.redirectInstructions,
+      tryAlternateSource: params.tryAlternateSource,
     }),
   });
 
@@ -223,6 +235,10 @@ export function useAgentPolicy(enabled = true) {
             settings: {
               ...DEFAULT_POLICY_SETTINGS,
               ...(data.settings || {}),
+              flag_autonomy: {
+                ...DEFAULT_FLAG_AUTONOMY,
+                ...(data.settings?.flag_autonomy || {}),
+              },
             },
             admin_instructions: data.admin_instructions || '',
             updated_at: data.updated_at || '',

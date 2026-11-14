@@ -1,5 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   extractFullArticle,
   fetchRssCandidates,
@@ -19,10 +21,16 @@ import { buildInstructionsSnapshot } from './policy';
 import type { ArticleDocument, PipelineTraceStep } from './types';
 
 // Load agent/.env if present (local dev); existing env vars (e.g. Hostinger) take precedence
-try {
-  process.loadEnvFile?.('agent/.env');
-} catch {
-  // Ignore if agent/.env does not exist
+const AGENT_DIR = resolve(__dirname, '../../agent');
+for (const envPath of [resolve(AGENT_DIR, '.env'), 'agent/.env', '.env']) {
+  try {
+    if (existsSync(envPath)) {
+      process.loadEnvFile?.(envPath);
+      break;
+    }
+  } catch {
+    // Ignore if loadEnvFile fails
+  }
 }
 
 async function runPipeline() {
@@ -93,10 +101,10 @@ async function runPipeline() {
   for (const [index, article] of fetchedArticles.entries()) {
     console.log(`[${index + 1}/${fetchedArticles.length}] Summarizing & judging: ${article.title}`);
     const summarizeStart = Date.now();
-    const summary = await summarizeArticle(ai, article, {
+    let summary = await summarizeArticle(ai, article, {
       policy: activePolicy,
     });
-    const summarizeDurationMs = Date.now() - summarizeStart;
+    let summarizeDurationMs = Date.now() - summarizeStart;
     if (!summary) {
       if (index < fetchedArticles.length - 1) {
         await sleep(8_000);
@@ -105,8 +113,33 @@ async function runPipeline() {
     }
 
     const judgeStart = Date.now();
-    const judgment = await judgeArticle(ai, article, summary);
-    const judgeDurationMs = Date.now() - judgeStart;
+    let judgment = await judgeArticle(ai, article, summary);
+    let judgeDurationMs = Date.now() - judgeStart;
+    let autoRetriedComplexity = false;
+
+    // Fix 4: Retry "Too complex" automatically once before a human sees it.
+    if (
+      judgment.flags.includes('TOO_COMPLEX') ||
+      judgment.scores.readability < 80
+    ) {
+      console.log(
+        `  -> Auto-retrying "Too complex" for "${article.title}" before editor sees it...`
+      );
+      const retryStart = Date.now();
+      const simplified = await summarizeArticle(ai, article, {
+        policy: activePolicy,
+        editorRedirect:
+          'Simplify the reading level strictly to Grade 6 or below. Replace multi-syllable or technical terms with plain everyday words and keep sentences under 16 words.',
+      });
+      if (simplified) {
+        summary = simplified;
+        summarizeDurationMs += Date.now() - retryStart;
+        const reJudgeStart = Date.now();
+        judgment = await judgeArticle(ai, article, summary);
+        judgeDurationMs += Date.now() - reJudgeStart;
+        autoRetriedComplexity = true;
+      }
+    }
 
     const nowIso = new Date().toISOString();
     const pipelineTrace: PipelineTraceStep[] = [
@@ -155,11 +188,16 @@ async function runPipeline() {
         at: nowIso,
         duration_ms: summarizeDurationMs,
         status: 'ok',
-        summary: `Generated headline & summary under policy ${activePolicy.active_version} (${activePolicy.settings.reading_level}).`,
+        summary: autoRetriedComplexity
+          ? `Generated headline & summary under policy ${activePolicy.active_version} (${activePolicy.settings.reading_level}) · Auto-retried "Too complex" once to simplify wording.`
+          : `Generated headline & summary under policy ${activePolicy.active_version} (${activePolicy.settings.reading_level}).`,
         details: {
           prompt_version: activePolicy.active_version,
           reading_level: activePolicy.settings.reading_level,
           summary_words: summary.ai_summary.split(/\s+/).filter(Boolean).length,
+          auto_retried_complexity: autoRetriedComplexity,
+          raw_candidates: allCandidates.length,
+          picked_count: topStories.length,
         },
       },
       {
@@ -204,6 +242,7 @@ async function runPipeline() {
       sensitive: article.sensitive,
       selection_reason: article.reason,
       used_fallback_snippet: article.usedFallbackSnippet,
+      auto_retried_complexity: autoRetriedComplexity,
       status: 'draft',
       approved_by: null,
       prompt_version: activePolicy.active_version,

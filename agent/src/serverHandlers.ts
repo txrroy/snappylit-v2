@@ -79,26 +79,35 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 async function buildFetchedFromDoc(
-  doc: ArticleDocument
+  doc: ArticleDocument,
+  tryAlternateSource = false
 ): Promise<FetchedArticle> {
+  const altUrls = doc.alternate_urls || [];
+  const primaryLink =
+    tryAlternateSource && altUrls.length > 0 ? altUrls[0] : doc.original_url;
+  const remainingAlts =
+    tryAlternateSource && altUrls.length > 0
+      ? [...altUrls.slice(1), doc.original_url]
+      : altUrls;
+
   const base: FetchedArticle = {
     title: doc.ai_headline,
-    link: doc.original_url,
+    link: primaryLink,
     snippet: doc.ai_summary,
     source: doc.source_names?.[0] || 'Source',
     imageUrl: doc.image_url,
     source_count: doc.source_count || 1,
     source_names: doc.source_names || [],
-    alternate_urls: doc.alternate_urls || [],
+    alternate_urls: remainingAlts,
     topic: doc.topic || 'World',
     region: doc.region || 'Global',
     sensitive: Boolean(doc.sensitive),
     reason: doc.selection_reason || '',
-    fullText: doc.source_text || '',
+    fullText: tryAlternateSource ? '' : doc.source_text || '',
     usedFallbackSnippet: Boolean(doc.used_fallback_snippet),
   };
 
-  if (base.fullText.trim().length >= 100) {
+  if (!tryAlternateSource && base.fullText.trim().length >= 100 && !doc.used_fallback_snippet) {
     return base;
   }
 
@@ -113,7 +122,7 @@ async function buildFetchedFromDoc(
 
   return {
     ...base,
-    fullText: doc.ai_summary,
+    fullText: doc.source_text || doc.ai_summary,
     usedFallbackSnippet: true,
   };
 }
@@ -129,6 +138,7 @@ export async function handleRegenerate(
       readingLevel?: ReadingLevel;
       targetSummaryWords?: number;
       redirectInstructions?: string;
+      tryAlternateSource?: boolean;
     };
 
     if (!body.articleId) {
@@ -161,9 +171,12 @@ export async function handleRegenerate(
       },
     };
 
-    const fetched = await buildFetchedFromDoc(articleDoc);
+    const fetched = await buildFetchedFromDoc(
+      articleDoc,
+      Boolean(body.tryAlternateSource)
+    );
     const startMs = Date.now();
-    const regenerated = await summarizeArticle(ai, fetched, {
+    let regenerated = await summarizeArticle(ai, fetched, {
       policy: effectivePolicy,
       editorRedirect: body.redirectInstructions,
     });
@@ -174,7 +187,22 @@ export async function handleRegenerate(
     }
 
     // Rule 1: Every regenerated draft goes through the Judge again
-    const judgment = await judgeArticle(ai, fetched, regenerated);
+    let judgment = await judgeArticle(ai, fetched, regenerated);
+
+    // Fix 4: Retry "Too complex" automatically once before a human sees it
+    if (
+      judgment.flags.includes('TOO_COMPLEX') ||
+      judgment.scores.readability < 80
+    ) {
+      const simplified = await summarizeArticle(ai, fetched, {
+        policy: effectivePolicy,
+        editorRedirect: `${body.redirectInstructions ? `${body.redirectInstructions}. ` : ''}Simplify the reading level strictly to Grade 6 or below with plain everyday words.`,
+      });
+      if (simplified) {
+        regenerated = simplified;
+        judgment = await judgeArticle(ai, fetched, regenerated);
+      }
+    }
     const durationMs = Date.now() - startMs;
 
     const instructionsSnapshot = buildInstructionsSnapshot(

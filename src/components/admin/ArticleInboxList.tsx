@@ -11,31 +11,41 @@ import {
   DSCard,
   type DSTone,
 } from '@/design-system';
-import type { Article, ArticleFlag, ArticleStatus } from '@/types/article';
-import { getFlagShortLabel } from '@/lib/editorialLabels';
+import type { Article, ArticleStatus } from '@/types/article';
+import {
+  getEditorialState,
+  getEditorialStateTone,
+  getQueueReviewReason,
+} from '@/lib/editorialLabels';
 
-export type AccuracyBucket = 'all' | 'low' | 'medium' | 'high';
-export type JudgeFilter = 'all' | 'pass' | 'review';
+export type ArticleInboxView =
+  | 'all'
+  | 'ready'
+  | 'needs-check'
+  | 'unverified'
+  | 'sensitive';
 
 export interface ArticleFilterState {
   search: string;
+  view: ArticleInboxView;
   status: ArticleStatus | 'all';
-  judge: JudgeFilter;
-  accuracy: AccuracyBucket;
-  topic: string | 'all';
-  region: string | 'all';
-  flag: ArticleFlag | 'SENSITIVE' | 'all';
 }
 
 export const INITIAL_FILTERS: ArticleFilterState = {
   search: '',
+  view: 'all',
   status: 'all',
-  judge: 'all',
-  accuracy: 'all',
-  topic: 'all',
-  region: 'all',
-  flag: 'all',
 };
+
+const FOUR_VIEWS: {
+  id: Exclude<ArticleInboxView, 'all'>;
+  label: string;
+}[] = [
+  { id: 'ready', label: 'Ready' },
+  { id: 'needs-check', label: 'Needs a check' },
+  { id: 'unverified', label: 'Could not verify' },
+  { id: 'sensitive', label: 'Sensitive' },
+];
 
 interface ArticleInboxListProps {
   folderTitle: string;
@@ -48,16 +58,13 @@ interface ArticleInboxListProps {
   onSelectArticle: (id: string) => void;
   onBatchApprove?: (ids: string[]) => Promise<void>;
   onBatchReject?: (ids: string[]) => Promise<void>;
+  onUnpublish?: (id: string) => Promise<void>;
 }
 
 export function isHighConfidenceReady(article: Article): boolean {
-  const acc = article.scores?.accuracy ?? article.confidence_score;
   return (
     article.status === 'draft' &&
-    article.judge_pass === true &&
-    (article.flags?.length ?? 0) === 0 &&
-    !article.sensitive &&
-    acc >= 85
+    getEditorialState(article) === 'Ready to approve'
   );
 }
 
@@ -77,16 +84,16 @@ function getSourceLabel(article: Article): string {
   }
 }
 
-function getStatusTone(status: ArticleStatus): DSTone {
-  if (status === 'published') return 'success';
-  if (status === 'rejected') return 'danger';
-  return 'warning';
+function getRowTone(article: Article): DSTone {
+  if (article.status === 'published') return 'success';
+  if (article.status === 'rejected') return 'danger';
+  return getEditorialStateTone(getEditorialState(article));
 }
 
-function getScoreTone(score: number): 'success' | 'warning' | 'danger' {
-  if (score >= 85) return 'success';
-  if (score >= 65) return 'warning';
-  return 'danger';
+function getRowStateLabel(article: Article): string {
+  if (article.status === 'published') return 'Published';
+  if (article.status === 'rejected') return 'Rejected';
+  return getEditorialState(article);
 }
 
 export function applyArticleFilters(
@@ -100,34 +107,17 @@ export function applyArticleFilters(
       return false;
     }
 
-    if (filters.judge === 'pass' && article.judge_pass !== true) {
+    const state = getEditorialState(article);
+    if (filters.view === 'ready' && state !== 'Ready to approve') {
       return false;
     }
-    if (filters.judge === 'review' && article.judge_pass !== false) {
+    if (filters.view === 'needs-check' && state !== 'Needs a check') {
       return false;
     }
-
-    const acc = getArticleAccuracy(article);
-    if (filters.accuracy === 'low' && acc >= 65) return false;
-    if (filters.accuracy === 'medium' && (acc < 65 || acc >= 85)) return false;
-    if (filters.accuracy === 'high' && acc < 85) return false;
-
-    if (filters.topic !== 'all' && article.topic !== filters.topic) {
+    if (filters.view === 'unverified' && state !== 'Could not verify') {
       return false;
     }
-
-    if (filters.region !== 'all' && article.region !== filters.region) {
-      return false;
-    }
-
-    if (filters.flag === 'SENSITIVE' && !article.sensitive) {
-      return false;
-    }
-    if (
-      filters.flag !== 'all' &&
-      filters.flag !== 'SENSITIVE' &&
-      !(article.flags ?? []).includes(filters.flag)
-    ) {
+    if (filters.view === 'sensitive' && !article.sensitive) {
       return false;
     }
 
@@ -159,130 +149,76 @@ export function ArticleInboxList({
   onChangeFilters,
   onSelectArticle,
   onBatchApprove,
-  onBatchReject,
+  onUnpublish,
 }: ArticleInboxListProps) {
   const { theme } = useDSTheme();
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [unpublishingId, setUnpublishingId] = useState<string | null>(null);
 
-  const visibleSelectedIds = useMemo(
+  const viewCounts = useMemo(() => {
+    let ready = 0;
+    let needsCheck = 0;
+    let unverified = 0;
+    let sensitive = 0;
+
+    for (const a of articles) {
+      const st = getEditorialState(a);
+      if (st === 'Ready to approve') ready += 1;
+      else if (st === 'Needs a check') needsCheck += 1;
+      else unverified += 1;
+      if (a.sensitive) sensitive += 1;
+    }
+
+    return {
+      ready,
+      'needs-check': needsCheck,
+      unverified,
+      sensitive,
+    };
+  }, [articles]);
+
+  const readyDraftsInView = useMemo(
     () =>
-      filteredArticles
-        .filter((a) => selectedIds.has(a.id))
-        .map((a) => a.id),
-    [filteredArticles, selectedIds]
+      filteredArticles.filter(
+        (a) =>
+          a.status === 'draft' &&
+          getEditorialState(a) === 'Ready to approve'
+      ),
+    [filteredArticles]
   );
 
-  const allVisibleSelected =
-    filteredArticles.length > 0 &&
-    visibleSelectedIds.length === filteredArticles.length;
-
-  const toggleSelectId = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    if (allVisibleSelected) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredArticles.map((a) => a.id)));
-    }
-  };
-
-  const handleBulkApproveSelected = async () => {
-    if (!onBatchApprove || visibleSelectedIds.length === 0) return;
-    setBatchBusy(true);
-    try {
-      await onBatchApprove(visibleSelectedIds);
-      setSelectedIds(new Set());
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
-  const handleBulkRejectSelected = async () => {
-    if (!onBatchReject || visibleSelectedIds.length === 0) return;
-    setBatchBusy(true);
-    try {
-      await onBatchReject(visibleSelectedIds);
-      setSelectedIds(new Set());
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
-  const { needsJudgment, readyToBatch } = useMemo(() => {
-    const drafts = filteredArticles.filter((a) => a.status === 'draft');
-    if (drafts.length === 0) {
-      return { needsJudgment: [] as Article[], readyToBatch: [] as Article[] };
-    }
-    return {
-      needsJudgment: filteredArticles.filter(
-        (a) => a.status === 'draft' && !isHighConfidenceReady(a)
-      ),
-      readyToBatch: filteredArticles.filter((a) => isHighConfidenceReady(a)),
-    };
-  }, [filteredArticles]);
-
-  const showTriageLanes =
-    !showStatusFilter &&
-    (needsJudgment.length > 0 || readyToBatch.length > 0) &&
-    filteredArticles.every((a) => a.status === 'draft');
+  // Fix 11: Remove "Select All (33)". Allow bulk approval only in the "Ready" view.
+  const canBulkApproveReady =
+    filters.view === 'ready' &&
+    readyDraftsInView.length > 0 &&
+    Boolean(onBatchApprove);
 
   const handleConfirmBatch = async () => {
-    if (!onBatchApprove || readyToBatch.length === 0) return;
+    if (!onBatchApprove || readyDraftsInView.length === 0) return;
     setBatchBusy(true);
     try {
-      await onBatchApprove(readyToBatch.map((a) => a.id));
+      await onBatchApprove(readyDraftsInView.map((a) => a.id));
       setBatchModalOpen(false);
     } finally {
       setBatchBusy(false);
     }
   };
 
-  const availableFactors = useMemo(() => {
-    const statuses = new Set<ArticleStatus>();
-    const topics = new Set<string>();
-    const regions = new Set<string>();
-    const flags = new Set<ArticleFlag>();
-    let hasJudge = false;
-    let hasSensitive = false;
-
-    for (const a of articles) {
-      statuses.add(a.status);
-      if (a.topic) topics.add(a.topic);
-      if (a.region) regions.add(a.region);
-      if (a.judge_pass !== undefined) hasJudge = true;
-      if (a.sensitive) hasSensitive = true;
-      for (const f of a.flags ?? []) {
-        flags.add(f);
-      }
+  const handleQuickUnpublish = async (id: string) => {
+    if (!onUnpublish || unpublishingId) return;
+    setUnpublishingId(id);
+    try {
+      await onUnpublish(id);
+    } finally {
+      setUnpublishingId(null);
     }
-
-    return {
-      statuses: Array.from(statuses),
-      topics: Array.from(topics).sort(),
-      regions: Array.from(regions).sort(),
-      flags: Array.from(flags).sort(),
-      hasJudge,
-      hasSensitive,
-    };
-  }, [articles]);
+  };
 
   const hasActiveFilters =
     filters.search.trim() !== '' ||
-    filters.status !== 'all' ||
-    filters.judge !== 'all' ||
-    filters.accuracy !== 'all' ||
-    filters.topic !== 'all' ||
-    filters.region !== 'all' ||
-    filters.flag !== 'all';
+    filters.view !== 'all' ||
+    filters.status !== 'all';
 
   return (
     <View
@@ -324,7 +260,7 @@ export function ArticleInboxList({
             </DSText>
             <DSText variant="caption" tone="tertiary">
               {filteredArticles.length === articles.length
-                ? `${articles.length} articles`
+                ? `${articles.length} stories`
                 : `${filteredArticles.length} of ${articles.length}`}
             </DSText>
           </View>
@@ -349,7 +285,9 @@ export function ArticleInboxList({
                 compact
                 style={{
                   borderRadius: theme.radii.pill,
-                  paddingRight: filters.search ? theme.spacing.xxxl : theme.spacing.md,
+                  paddingRight: filters.search
+                    ? theme.spacing.xxxl
+                    : theme.spacing.md,
                 }}
               />
               {filters.search ? (
@@ -372,7 +310,7 @@ export function ArticleInboxList({
 
             {hasActiveFilters ? (
               <DSButton
-                label="Clear"
+                label="Show all"
                 variant="secondary"
                 size="sm"
                 pill
@@ -382,217 +320,8 @@ export function ArticleInboxList({
           </View>
         </View>
 
-        {/* Dynamic Factor Filters */}
+        {/* Fix 5: Replace the filter chips with four views: "Ready", "Needs a check", "Could not verify", "Sensitive" */}
         {articles.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: theme.spacing.md,
-              paddingVertical: theme.spacing.xxs,
-            }}
-          >
-            {showStatusFilter && availableFactors.statuses.length > 1 ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.xs,
-                }}
-              >
-                <DSText variant="micro" weight="semibold" tone="tertiary">
-                  Status:
-                </DSText>
-                {(['draft', 'published', 'rejected'] as ArticleStatus[])
-                  .filter((s) => availableFactors.statuses.includes(s))
-                  .map((status) => (
-                    <DSChip
-                      key={status}
-                      label={
-                        status === 'draft'
-                          ? 'Pending'
-                          : status === 'published'
-                            ? 'Published'
-                            : 'Rejected'
-                      }
-                      active={filters.status === status}
-                      onPress={() =>
-                        onChangeFilters({
-                          ...filters,
-                          status: filters.status === status ? 'all' : status,
-                        })
-                      }
-                    />
-                  ))}
-              </View>
-            ) : null}
-
-            {availableFactors.hasJudge ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.xs,
-                }}
-              >
-                <DSText variant="micro" weight="semibold" tone="tertiary">
-                  Judge:
-                </DSText>
-                <DSChip
-                  label="Auto-Pass"
-                  active={filters.judge === 'pass'}
-                  onPress={() =>
-                    onChangeFilters({
-                      ...filters,
-                      judge: filters.judge === 'pass' ? 'all' : 'pass',
-                    })
-                  }
-                />
-                <DSChip
-                  label="Needs Review"
-                  active={filters.judge === 'review'}
-                  onPress={() =>
-                    onChangeFilters({
-                      ...filters,
-                      judge: filters.judge === 'review' ? 'all' : 'review',
-                    })
-                  }
-                />
-              </View>
-            ) : null}
-
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: theme.spacing.xs,
-              }}
-            >
-              <DSText variant="micro" weight="semibold" tone="tertiary">
-                Accuracy:
-              </DSText>
-              {(
-                [
-                  ['low', '<65'],
-                  ['medium', '65–84'],
-                  ['high', '85+'],
-                ] as const
-              ).map(([bucket, label]) => (
-                <DSChip
-                  key={bucket}
-                  label={label}
-                  active={filters.accuracy === bucket}
-                  onPress={() =>
-                    onChangeFilters({
-                      ...filters,
-                      accuracy: filters.accuracy === bucket ? 'all' : bucket,
-                    })
-                  }
-                />
-              ))}
-            </View>
-
-            {availableFactors.topics.length > 0 ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.xs,
-                }}
-              >
-                <DSText variant="micro" weight="semibold" tone="tertiary">
-                  Topic:
-                </DSText>
-                {availableFactors.topics.map((topic) => (
-                  <DSChip
-                    key={topic}
-                    label={topic}
-                    active={filters.topic === topic}
-                    onPress={() =>
-                      onChangeFilters({
-                        ...filters,
-                        topic: filters.topic === topic ? 'all' : topic,
-                      })
-                    }
-                  />
-                ))}
-              </View>
-            ) : null}
-
-            {availableFactors.regions.length > 0 ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.xs,
-                }}
-              >
-                <DSText variant="micro" weight="semibold" tone="tertiary">
-                  Region:
-                </DSText>
-                {availableFactors.regions.map((region) => (
-                  <DSChip
-                    key={region}
-                    label={region}
-                    active={filters.region === region}
-                    onPress={() =>
-                      onChangeFilters({
-                        ...filters,
-                        region: filters.region === region ? 'all' : region,
-                      })
-                    }
-                  />
-                ))}
-              </View>
-            ) : null}
-
-            {availableFactors.flags.length > 0 ||
-            availableFactors.hasSensitive ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.xs,
-                }}
-              >
-                <DSText variant="micro" weight="semibold" tone="tertiary">
-                  Flags:
-                </DSText>
-                {availableFactors.hasSensitive ? (
-                  <DSChip
-                    label="SENSITIVE"
-                    active={filters.flag === 'SENSITIVE'}
-                    onPress={() =>
-                      onChangeFilters({
-                        ...filters,
-                        flag:
-                          filters.flag === 'SENSITIVE' ? 'all' : 'SENSITIVE',
-                      })
-                    }
-                  />
-                ) : null}
-                {availableFactors.flags.map((flag) => (
-                  <DSChip
-                    key={flag}
-                    label={flag}
-                    active={filters.flag === flag}
-                    onPress={() =>
-                      onChangeFilters({
-                        ...filters,
-                        flag: filters.flag === flag ? 'all' : flag,
-                      })
-                    }
-                  />
-                ))}
-              </View>
-            ) : null}
-          </ScrollView>
-        ) : null}
-
-        {/* Bulk Selection Bar */}
-        {filteredArticles.length > 0 && (onBatchApprove || onBatchReject) ? (
           <View
             style={{
               flexDirection: 'row',
@@ -600,72 +329,88 @@ export function ArticleInboxList({
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: theme.spacing.sm,
-              paddingTop: theme.spacing.xs,
             }}
           >
             <View
               style={{
                 flexDirection: 'row',
+                flexWrap: 'wrap',
                 alignItems: 'center',
-                gap: theme.spacing.sm,
+                gap: theme.spacing.xs + 2,
               }}
             >
-              <DSButton
-                label={
-                  allVisibleSelected
-                    ? 'Deselect All'
-                    : `Select All (${filteredArticles.length})`
-                }
-                variant="secondary"
-                size="sm"
-                pill
-                disabled={batchBusy}
-                onPress={toggleSelectAll}
+              <DSChip
+                label={`All (${articles.length})`}
+                active={filters.view === 'all'}
+                onPress={() => onChangeFilters({ ...filters, view: 'all' })}
               />
-              {visibleSelectedIds.length > 0 ? (
-                <DSText variant="caption" weight="semibold" tone="primary">
-                  {visibleSelectedIds.length} selected
-                </DSText>
+              {FOUR_VIEWS.map((v) => {
+                const count = viewCounts[v.id];
+                return (
+                  <DSChip
+                    key={v.id}
+                    label={`${v.label} (${count})`}
+                    active={filters.view === v.id}
+                    onPress={() =>
+                      onChangeFilters({
+                        ...filters,
+                        view: filters.view === v.id ? 'all' : v.id,
+                      })
+                    }
+                  />
+                );
+              })}
+
+              {showStatusFilter ? (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: theme.spacing.xs,
+                    marginLeft: theme.spacing.sm,
+                  }}
+                >
+                  {(['draft', 'published', 'rejected'] as ArticleStatus[]).map(
+                    (status) => (
+                      <DSChip
+                        key={status}
+                        label={
+                          status === 'draft'
+                            ? 'In review'
+                            : status === 'published'
+                              ? 'Published'
+                              : 'Rejected'
+                        }
+                        active={filters.status === status}
+                        onPress={() =>
+                          onChangeFilters({
+                            ...filters,
+                            status: filters.status === status ? 'all' : status,
+                          })
+                        }
+                      />
+                    )
+                  )}
+                </View>
               ) : null}
             </View>
 
-            {visibleSelectedIds.length > 0 ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: theme.spacing.sm,
-                }}
-              >
-                {onBatchReject ? (
-                  <DSButton
-                    label={`Reject Selected (${visibleSelectedIds.length})`}
-                    variant="danger"
-                    size="sm"
-                    pill
-                    loading={batchBusy}
-                    disabled={batchBusy}
-                    onPress={handleBulkRejectSelected}
-                  />
-                ) : null}
-                {onBatchApprove ? (
-                  <DSButton
-                    label={`Approve Selected (${visibleSelectedIds.length})`}
-                    variant="accent"
-                    size="sm"
-                    pill
-                    loading={batchBusy}
-                    disabled={batchBusy}
-                    onPress={handleBulkApproveSelected}
-                  />
-                ) : null}
-              </View>
+            {/* Fix 11: Allow bulk approval ONLY in the "Ready" view */}
+            {canBulkApproveReady ? (
+              <DSButton
+                label={`Approve all Ready (${readyDraftsInView.length})`}
+                variant="accent"
+                size="sm"
+                pill
+                disabled={batchBusy}
+                onPress={() => setBatchModalOpen(true)}
+              />
             ) : null}
           </View>
         ) : null}
       </View>
 
-      {/* Article Rows */}
+      {/* Fix 3: Show the plain reason in list rows. Move numeric scores to detail view. */}
       <ScrollView style={{ flex: 1 }}>
         {filteredArticles.length === 0 ? (
           <View
@@ -678,12 +423,12 @@ export function ArticleInboxList({
           >
             <DSText variant="subhead" weight="medium" tone="secondary" center>
               {articles.length === 0
-                ? 'No articles in this section.'
-                : 'No articles match the active filters.'}
+                ? 'No stories in this folder.'
+                : 'No stories match this view.'}
             </DSText>
             {hasActiveFilters ? (
               <DSButton
-                label="Reset Filters"
+                label="Show all stories"
                 variant="secondary"
                 size="sm"
                 pill
@@ -692,349 +437,19 @@ export function ArticleInboxList({
               />
             ) : null}
           </View>
-        ) : showTriageLanes ? (
-          <View>
-            {needsJudgment.length > 0 ? (
-              <View>
-                <View
-                  style={{
-                    backgroundColor: theme.colors.surfaceHeader,
-                    paddingHorizontal: theme.spacing.lg,
-                    paddingVertical: theme.spacing.sm,
-                    borderBottomWidth: theme.layout.borderWidth,
-                    borderBottomColor: theme.colors.borderSubtle,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <DSText variant="micro" weight="bold" tone="warning" uppercase>
-                    Needs Human Judgment ({needsJudgment.length})
-                  </DSText>
-                  <DSText variant="micro" tone="tertiary">
-                    Flagged, sensitive, or score &lt; 85
-                  </DSText>
-                </View>
-                {needsJudgment.map((item) => {
-                  const isSelected = item.id === selectedArticleId;
-                  const accuracy = getArticleAccuracy(item);
-                  const statusTone = getStatusTone(item.status);
-                  const scoreTone = getScoreTone(accuracy);
-                  const flags = item.flags ?? [];
-
-                  return (
-                    <View key={item.id}>
-                      <Pressable
-                        onPress={() => onSelectArticle(item.id)}
-                        style={({ pressed }) => [
-                          {
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            paddingHorizontal: theme.spacing.lg,
-                            paddingVertical: theme.spacing.md,
-                            backgroundColor: isSelected
-                              ? theme.colors.surfaceSelected
-                              : pressed
-                                ? theme.colors.surfaceHover
-                                : theme.colors.surface,
-                          },
-                        ]}
-                      >
-                        <Pressable
-                          onPress={(e) => {
-                            e.stopPropagation?.();
-                            toggleSelectId(item.id);
-                          }}
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: 4,
-                            borderWidth: 1.5,
-                            borderColor: selectedIds.has(item.id)
-                              ? theme.colors.accent
-                              : theme.colors.borderStrong,
-                            backgroundColor: selectedIds.has(item.id)
-                              ? theme.colors.accent
-                              : 'transparent',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            marginRight: theme.spacing.sm,
-                          }}
-                        >
-                          {selectedIds.has(item.id) ? (
-                            <DSText variant="micro" weight="bold" tone="inverse">
-                              ✓
-                            </DSText>
-                          ) : null}
-                        </Pressable>
-                        <View
-                          style={{
-                            width: theme.spacing.sm,
-                            height: theme.spacing.sm,
-                            borderRadius: theme.radii.pill,
-                            marginRight: theme.spacing.md,
-                            backgroundColor: theme.colors.tones[statusTone].dot,
-                          }}
-                        />
-                        <View
-                          style={{ paddingRight: theme.spacing.md }}
-                          className="w-24 md:w-36 shrink-0"
-                        >
-                          <DSText
-                            variant="caption"
-                            weight="semibold"
-                            tone="secondary"
-                            numberOfLines={1}
-                          >
-                            {getSourceLabel(item)}
-                          </DSText>
-                        </View>
-                        <View
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            paddingRight: theme.spacing.md,
-                          }}
-                        >
-                          <Text
-                            numberOfLines={1}
-                            style={[
-                              theme.typography.body,
-                              {
-                                fontFamily: theme.fontFamilies.sans,
-                                color: theme.colors.textPrimary,
-                              },
-                            ]}
-                          >
-                            <Text style={{ fontWeight: '600' }}>
-                              {item.ai_headline}
-                            </Text>
-                            <Text
-                              style={{
-                                color: theme.colors.textTertiary,
-                                fontWeight: '400',
-                              }}
-                            >
-                              {' '}
-                              — {item.ai_summary}
-                            </Text>
-                          </Text>
-                        </View>
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: theme.spacing.sm,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {item.sensitive ? (
-                            <DSBadge label="SENSITIVE" tone="warning" />
-                          ) : null}
-                          {flags.length > 0 ? (
-                            <View className="hidden md:flex">
-                              <DSBadge
-                                label={
-                                  flags.length === 1
-                                    ? getFlagShortLabel(flags[0])
-                                    : `${flags.length} flags`
-                                }
-                                tone="danger"
-                              />
-                            </View>
-                          ) : null}
-                          <DSText
-                            variant="footnote"
-                            weight="bold"
-                            tone={scoreTone}
-                            tabularNums
-                            style={{ width: 28, textAlign: 'right' }}
-                          >
-                            {accuracy}
-                          </DSText>
-                        </View>
-                      </Pressable>
-                      <DSDivider />
-                    </View>
-                  );
-                })}
-              </View>
-            ) : null}
-
-            {readyToBatch.length > 0 ? (
-              <View>
-                <View
-                  style={{
-                    backgroundColor: theme.colors.surfaceHeader,
-                    paddingHorizontal: theme.spacing.lg,
-                    paddingVertical: theme.spacing.sm,
-                    borderBottomWidth: theme.layout.borderWidth,
-                    borderBottomColor: theme.colors.borderSubtle,
-                    flexDirection: 'row',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: theme.spacing.sm,
-                  }}
-                >
-                  <DSText variant="micro" weight="bold" tone="success" uppercase>
-                    Ready to Batch-Approve ({readyToBatch.length})
-                  </DSText>
-                  {onBatchApprove ? (
-                    <DSButton
-                      label={`Approve All High-Confidence (${readyToBatch.length})`}
-                      variant="accent"
-                      size="sm"
-                      pill
-                      onPress={() => setBatchModalOpen(true)}
-                    />
-                  ) : null}
-                </View>
-                {readyToBatch.map((item) => {
-                  const isSelected = item.id === selectedArticleId;
-                  const accuracy = getArticleAccuracy(item);
-                  const statusTone = getStatusTone(item.status);
-                  const scoreTone = getScoreTone(accuracy);
-
-                  return (
-                    <View key={item.id}>
-                      <Pressable
-                        onPress={() => onSelectArticle(item.id)}
-                        style={({ pressed }) => [
-                          {
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            paddingHorizontal: theme.spacing.lg,
-                            paddingVertical: theme.spacing.md,
-                            backgroundColor: isSelected
-                              ? theme.colors.surfaceSelected
-                              : pressed
-                                ? theme.colors.surfaceHover
-                                : theme.colors.surface,
-                          },
-                        ]}
-                      >
-                        <Pressable
-                          onPress={(e) => {
-                            e.stopPropagation?.();
-                            toggleSelectId(item.id);
-                          }}
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: 4,
-                            borderWidth: 1.5,
-                            borderColor: selectedIds.has(item.id)
-                              ? theme.colors.accent
-                              : theme.colors.borderStrong,
-                            backgroundColor: selectedIds.has(item.id)
-                              ? theme.colors.accent
-                              : 'transparent',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            marginRight: theme.spacing.sm,
-                          }}
-                        >
-                          {selectedIds.has(item.id) ? (
-                            <DSText variant="micro" weight="bold" tone="inverse">
-                              ✓
-                            </DSText>
-                          ) : null}
-                        </Pressable>
-                        <View
-                          style={{
-                            width: theme.spacing.sm,
-                            height: theme.spacing.sm,
-                            borderRadius: theme.radii.pill,
-                            marginRight: theme.spacing.md,
-                            backgroundColor: theme.colors.tones[statusTone].dot,
-                          }}
-                        />
-                        <View
-                          style={{ paddingRight: theme.spacing.md }}
-                          className="w-24 md:w-36 shrink-0"
-                        >
-                          <DSText
-                            variant="caption"
-                            weight="semibold"
-                            tone="secondary"
-                            numberOfLines={1}
-                          >
-                            {getSourceLabel(item)}
-                          </DSText>
-                        </View>
-                        <View
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            paddingRight: theme.spacing.md,
-                          }}
-                        >
-                          <Text
-                            numberOfLines={1}
-                            style={[
-                              theme.typography.body,
-                              {
-                                fontFamily: theme.fontFamilies.sans,
-                                color: theme.colors.textPrimary,
-                              },
-                            ]}
-                          >
-                            <Text style={{ fontWeight: '600' }}>
-                              {item.ai_headline}
-                            </Text>
-                            <Text
-                              style={{
-                                color: theme.colors.textTertiary,
-                                fontWeight: '400',
-                              }}
-                            >
-                              {' '}
-                              — {item.ai_summary}
-                            </Text>
-                          </Text>
-                        </View>
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: theme.spacing.sm,
-                            flexShrink: 0,
-                          }}
-                        >
-                          <DSText
-                            variant="micro"
-                            weight="semibold"
-                            tone="success"
-                            className="hidden sm:flex"
-                          >
-                            PASS
-                          </DSText>
-                          <DSText
-                            variant="footnote"
-                            weight="bold"
-                            tone={scoreTone}
-                            tabularNums
-                            style={{ width: 28, textAlign: 'right' }}
-                          >
-                            {accuracy}
-                          </DSText>
-                        </View>
-                      </Pressable>
-                      <DSDivider />
-                    </View>
-                  );
-                })}
-              </View>
-            ) : null}
-          </View>
         ) : (
           filteredArticles.map((item) => {
             const isSelected = item.id === selectedArticleId;
-            const accuracy = getArticleAccuracy(item);
-            const statusTone = getStatusTone(item.status);
-            const scoreTone = getScoreTone(accuracy);
-            const flags = item.flags ?? [];
+            const rowTone = getRowTone(item);
+            const stateLabel = getRowStateLabel(item);
+            const plainReason =
+              item.status === 'published'
+                ? 'Published live in reader edition.'
+                : item.status === 'rejected'
+                  ? item.rejection_reason
+                    ? `Rejected: ${item.rejection_reason}`
+                    : 'Rejected by editor.'
+                  : getQueueReviewReason(item);
 
             return (
               <View key={item.id}>
@@ -1054,48 +469,21 @@ export function ArticleInboxList({
                     },
                   ]}
                 >
-                  {/* Checkbox + Status dot */}
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      toggleSelectId(item.id);
-                    }}
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 4,
-                      borderWidth: 1.5,
-                      borderColor: selectedIds.has(item.id)
-                        ? theme.colors.accent
-                        : theme.colors.borderStrong,
-                      backgroundColor: selectedIds.has(item.id)
-                        ? theme.colors.accent
-                        : 'transparent',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginRight: theme.spacing.sm,
-                    }}
-                  >
-                    {selectedIds.has(item.id) ? (
-                      <DSText variant="micro" weight="bold" tone="inverse">
-                        ✓
-                      </DSText>
-                    ) : null}
-                  </Pressable>
+                  {/* Status dot */}
                   <View
                     style={{
                       width: theme.spacing.sm,
                       height: theme.spacing.sm,
                       borderRadius: theme.radii.pill,
                       marginRight: theme.spacing.md,
-                      backgroundColor: theme.colors.tones[statusTone].dot,
+                      backgroundColor: theme.colors.tones[rowTone].dot,
                     }}
                   />
 
                   {/* Left column: Topic / Source */}
                   <View
                     style={{ paddingRight: theme.spacing.md }}
-                    className="w-24 md:w-36 shrink-0"
+                    className="w-24 md:w-32 shrink-0"
                   >
                     <DSText
                       variant="caption"
@@ -1107,12 +495,13 @@ export function ArticleInboxList({
                     </DSText>
                   </View>
 
-                  {/* Center: Headline — Summary snippet */}
+                  {/* Center: Headline + One Plain Reason underneath (Fix 3) */}
                   <View
                     style={{
                       flex: 1,
                       minWidth: 0,
                       paddingRight: theme.spacing.md,
+                      gap: 2,
                     }}
                   >
                     <Text
@@ -1122,25 +511,22 @@ export function ArticleInboxList({
                         {
                           fontFamily: theme.fontFamilies.sans,
                           color: theme.colors.textPrimary,
+                          fontWeight: '600',
                         },
                       ]}
                     >
-                      <Text style={{ fontWeight: '600' }}>
-                        {item.ai_headline}
-                      </Text>
-                      <Text
-                        style={{
-                          color: theme.colors.textTertiary,
-                          fontWeight: '400',
-                        }}
-                      >
-                        {' '}
-                        — {item.ai_summary}
-                      </Text>
+                      {item.ai_headline}
                     </Text>
+                    <DSText
+                      variant="caption"
+                      tone="secondary"
+                      numberOfLines={1}
+                    >
+                      {plainReason}
+                    </DSText>
                   </View>
 
-                  {/* Right: Restrained Flags & Tabular Accuracy */}
+                  {/* Right: Unified Three-State Badge + Unpublish button when published (Fix 2 & Fix 15) */}
                   <View
                     style={{
                       flexDirection: 'row',
@@ -1150,31 +536,24 @@ export function ArticleInboxList({
                     }}
                   >
                     {item.sensitive ? (
-                      <DSBadge label="SENSITIVE" tone="warning" />
+                      <DSBadge label="Sensitive" tone="neutral" />
                     ) : null}
 
-                    {flags.length > 0 ? (
-                      <View className="hidden md:flex">
-                        <DSBadge
-                          label={
-                            flags.length === 1
-                              ? getFlagShortLabel(flags[0])
-                              : `${flags.length} flags`
-                          }
-                          tone="danger"
-                        />
-                      </View>
-                    ) : null}
+                    <DSBadge label={stateLabel} tone={rowTone} dot />
 
-                    <DSText
-                      variant="footnote"
-                      weight="bold"
-                      tone={scoreTone}
-                      tabularNums
-                      style={{ width: 28, textAlign: 'right' }}
-                    >
-                      {accuracy}
-                    </DSText>
+                    {item.status === 'published' && onUnpublish ? (
+                      <DSButton
+                        label="Unpublish"
+                        variant="secondary"
+                        size="sm"
+                        loading={unpublishingId === item.id}
+                        disabled={unpublishingId !== null}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          void handleQuickUnpublish(item.id);
+                        }}
+                      />
+                    ) : null}
                   </View>
                 </Pressable>
                 <DSDivider />
@@ -1184,7 +563,7 @@ export function ArticleInboxList({
         )}
       </ScrollView>
 
-      {/* Batch-Approve Confirmation Modal */}
+      {/* Batch-Approve Confirmation Modal (Ready view only) */}
       <Modal
         visible={batchModalOpen}
         transparent
@@ -1201,15 +580,17 @@ export function ArticleInboxList({
           }}
         >
           <DSCard
-            headerTitle={`Approve ${readyToBatch.length} High-Confidence Stories`}
-            headerSubtitle="All selected drafts passed Judge audit with 0 flags and accuracy ≥ 85."
+            headerTitle={`Approve ${readyDraftsInView.length} Ready Stories`}
+            headerSubtitle="Every story below was verified against the full article text and passed all Judge checks."
             elevated
             padding="lg"
             style={{ width: '100%', maxWidth: 520 }}
           >
-            <ScrollView style={{ maxHeight: 260, marginBottom: theme.spacing.lg }}>
+            <ScrollView
+              style={{ maxHeight: 260, marginBottom: theme.spacing.lg }}
+            >
               <View style={{ gap: theme.spacing.sm }}>
-                {readyToBatch.map((a) => (
+                {readyDraftsInView.map((a) => (
                   <View
                     key={a.id}
                     style={{
@@ -1228,10 +609,7 @@ export function ArticleInboxList({
                     >
                       • {a.ai_headline}
                     </DSText>
-                    <DSBadge
-                      label={`${getArticleAccuracy(a)}`}
-                      tone="success"
-                    />
+                    <DSBadge label="Ready to approve" tone="success" />
                   </View>
                 ))}
               </View>
@@ -1252,7 +630,7 @@ export function ArticleInboxList({
                 onPress={() => setBatchModalOpen(false)}
               />
               <DSButton
-                label={`Confirm & Publish (${readyToBatch.length})`}
+                label={`Confirm & Publish (${readyDraftsInView.length})`}
                 variant="primary"
                 size="md"
                 loading={batchBusy}

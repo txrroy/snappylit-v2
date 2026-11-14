@@ -70,8 +70,9 @@ function AdminDashboardContent() {
     batchApproveArticles,
     batchRejectArticles,
     rejectArticle,
-    revertToDraft,
+    unpublishArticle,
     confirmKidsTopic,
+    confirmSourceChecked,
   } = useAdminArticles(isAuthorized);
 
   const {
@@ -131,10 +132,22 @@ function AdminDashboardContent() {
     const olderMap = new Map<string, number>();
 
     for (const article of articles) {
-      if (article.status === 'draft') allPend.push(article);
-      else if (article.status === 'published') allPub.push(article);
+      // Fix 4: Expire pending stories after 48 hours relative to the latest edition date
+      if (article.status === 'draft') {
+        const refMs = Date.parse(`${effectiveOverviewDate}T23:59:59Z`);
+        const artMs = Date.parse(`${article.date}T12:00:00Z`);
+        const isExpired48h =
+          !Number.isNaN(refMs) &&
+          !Number.isNaN(artMs) &&
+          (refMs - artMs) / (1000 * 60 * 60) > 48;
+        if (!isExpired48h) {
+          allPend.push(article);
+        }
+      } else if (article.status === 'published') {
+        allPub.push(article);
+      }
 
-      if (article.date === today) {
+      if (article.date === effectiveOverviewDate) {
         if (article.status === 'published') pub.push(article);
         else if (article.status === 'draft') pend.push(article);
       } else {
@@ -153,7 +166,7 @@ function AdminDashboardContent() {
       todayPending: pend,
       olderDates: dates,
     };
-  }, [articles, today]);
+  }, [articles, effectiveOverviewDate]);
 
   const folderArticles = useMemo(() => {
     if (selectedFolder.type === 'all-pending') return allPending;
@@ -176,10 +189,10 @@ function AdminDashboardContent() {
   );
 
   const folderTitle = useMemo(() => {
-    if (selectedFolder.type === 'all-pending') return 'All Pending';
+    if (selectedFolder.type === 'all-pending') return 'Approval Inbox · In Review';
     if (selectedFolder.type === 'all-published') return 'All Published';
     if (selectedFolder.type === 'today-published') return 'Today · Published';
-    if (selectedFolder.type === 'today-pending') return 'Today · Pending';
+    if (selectedFolder.type === 'today-pending') return 'Today · In Review';
     return formatEditionDate(selectedFolder.date);
   }, [selectedFolder]);
 
@@ -424,20 +437,21 @@ function AdminDashboardContent() {
         <EditorOverviewPane
           articles={articles}
           today={effectiveOverviewDate}
-          adminUid={user.uid}
-          drawerOpen={Boolean(selectedArticleId) || livePipelineOpen}
-          selectedArticleId={selectedArticleId}
-          onSelectArticle={setSelectedArticleId}
-          onApproveArticle={approveArticle}
-          onRejectArticle={rejectArticle}
-          onRevertToDraft={revertToDraft}
-          onOpenInbox={(folder, articleId) => {
+          activePolicy={activePolicy}
+          onOpenInbox={(folder, articleId, viewFilter) => {
             setSelectedFolder(folder);
-            setFilters(INITIAL_FILTERS);
+            setFilters({
+              ...INITIAL_FILTERS,
+              view: viewFilter ?? 'all',
+            });
             setSelectedArticleId(articleId ?? null);
             setActiveView('inbox');
           }}
           onOpenLivePipeline={() => setLivePipelineOpen(true)}
+          onOpenSettings={() => {
+            setSettingsTab('policy');
+            setActiveView('settings');
+          }}
         />
       ) : activeView === 'inbox' ? (
         <View
@@ -469,21 +483,7 @@ function AdminDashboardContent() {
             onSelectArticle={setSelectedArticleId}
             onBatchApprove={(ids) => batchApproveArticles(ids, user.uid)}
             onBatchReject={batchRejectArticles}
-          />
-
-          <ArticleReaderDrawer
-            article={selectedArticle}
-            adminUid={user.uid}
-            hasPrev={hasPrev}
-            hasNext={hasNext}
-            getIdToken={getIdToken}
-            onPrev={handlePrev}
-            onNext={handleNext}
-            onClose={() => setSelectedArticleId(null)}
-            onSaveChanges={saveChanges}
-            onApprove={approveArticle}
-            onReject={rejectArticle}
-            onConfirmKidsTopic={confirmKidsTopic}
+            onUnpublish={unpublishArticle}
           />
         </View>
       ) : (
@@ -551,6 +551,24 @@ function AdminDashboardContent() {
           )}
         </View>
       )}
+
+      {/* Article Reader & Editor Drawer */}
+      <ArticleReaderDrawer
+        article={selectedArticle}
+        adminUid={user.uid}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        getIdToken={getIdToken}
+        onPrev={handlePrev}
+        onNext={handleNext}
+        onClose={() => setSelectedArticleId(null)}
+        onSaveChanges={saveChanges}
+        onApprove={approveArticle}
+        onReject={rejectArticle}
+        onUnpublish={unpublishArticle}
+        onConfirmKidsTopic={confirmKidsTopic}
+        onConfirmSourceChecked={confirmSourceChecked}
+      />
 
       {/* Live Multi-Agent Pipeline Visualizer Drawer */}
       <LivePipelineDrawer

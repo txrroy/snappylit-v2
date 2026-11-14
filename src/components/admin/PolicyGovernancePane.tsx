@@ -12,13 +12,17 @@ import {
   DSDivider,
 } from '@/design-system';
 import {
+  DEFAULT_FLAG_AUTONOMY,
   LOCKED_CORE_SUMMARY,
   proposePolicyFromEdits,
   type PolicyProposal,
   type PolicyTestSample,
 } from '@/hooks/useGovernance';
+import { getFlagPlainReason, getFlagShortLabel } from '@/lib/editorialLabels';
 import type {
   ActivePolicyDoc,
+  ArticleFlag,
+  AutonomyLevel,
   PolicySettings,
   PolicyTone,
   PolicyVersion,
@@ -62,6 +66,20 @@ const TONES: { value: PolicyTone; label: string }[] = [
   { value: 'calm_neutral', label: 'Calm & Neutral' },
   { value: 'curious_educator', label: 'Curious Educator' },
   { value: 'concise_wire', label: 'Concise Wire' },
+];
+
+const AUTONOMY_FLAGS: ArticleFlag[] = [
+  'TOO_COMPLEX',
+  'ONE_SIDED',
+  'LOADED_LANGUAGE',
+  'GRAPHIC_DETAIL',
+  'SNIPPET_ONLY',
+];
+
+const AUTONOMY_LEVELS: { value: AutonomyLevel; label: string }[] = [
+  { value: 'ask_me', label: 'Ask me' },
+  { value: 'fix_then_show', label: 'Fix, then show me' },
+  { value: 'fix_automatically', label: 'Fix automatically' },
 ];
 
 function Stepper({
@@ -485,6 +503,78 @@ export function PolicyGovernancePane({
                 }
               />
             </View>
+          </View>
+        </DSCard>
+
+        {/* Fix 12: Autonomy Ladder per Flag Type */}
+        <DSCard
+          headerTitle="Autonomy Ladder · How Agents Handle Each Flag Type"
+          headerSubtitle="Choose when the agents should ask you vs. self-correct. Publishing always stays locked to the human editor."
+          headerRight={
+            <DSBadge label="Publishing Locked to Human" tone="success" dot />
+          }
+          padding="lg"
+        >
+          <View style={{ gap: theme.spacing.md }}>
+            {AUTONOMY_FLAGS.map((flag, idx) => {
+              const currentMap = {
+                ...DEFAULT_FLAG_AUTONOMY,
+                ...(settings.flag_autonomy || {}),
+              };
+              const activeLevel = currentMap[flag] ?? 'ask_me';
+              return (
+                <View key={flag}>
+                  {idx > 0 ? (
+                    <View style={{ marginBottom: theme.spacing.md }}>
+                      <DSDivider />
+                    </View>
+                  ) : null}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: theme.spacing.md,
+                    }}
+                  >
+                    <View style={{ flex: 1, minWidth: 220, gap: 2 }}>
+                      <DSText variant="footnote" weight="bold" tone="primary">
+                        {getFlagShortLabel(flag)}
+                      </DSText>
+                      <DSText variant="caption" tone="secondary">
+                        {getFlagPlainReason(flag)}
+                      </DSText>
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        flexWrap: 'wrap',
+                        gap: theme.spacing.xs + 2,
+                      }}
+                    >
+                      {AUTONOMY_LEVELS.map((opt) => (
+                        <DSChip
+                          key={opt.value}
+                          label={opt.label}
+                          active={activeLevel === opt.value}
+                          onPress={() =>
+                            setSettings({
+                              ...settings,
+                              flag_autonomy: {
+                                ...currentMap,
+                                [flag]: opt.value,
+                              },
+                            })
+                          }
+                        />
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         </DSCard>
 

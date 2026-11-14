@@ -87,6 +87,8 @@ export function SwipeCardDeck({
     Record<string, 'important' | 'not_worth'>
   >({});
   const [compactImage, setCompactImage] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
+  const [nextImageLoadFailed, setNextImageLoadFailed] = useState(false);
   const [flipTipDismissed, setFlipTipDismissed] = useState(false);
   const [topicTipDismissed, setTopicTipDismissed] = useState(false);
   const textAreaHeightRef = useRef(0);
@@ -107,6 +109,8 @@ export function SwipeCardDeck({
 
   useEffect(() => {
     setCompactImage(false);
+    setImageLoadFailed(false);
+    setNextImageLoadFailed(false);
     textAreaHeightRef.current = 0;
     textContentHeightRef.current = 0;
   }, [currentArticle?.id]);
@@ -717,7 +721,7 @@ export function SwipeCardDeck({
             ]}
           >
             <Animated.View style={[{ flex: 1 }, nextCardContentStyle]}>
-              {nextArticle && (!showImages || nextArticle.image_url) ? (
+              {nextArticle ? (
                 <View
                   style={{
                     position: 'relative',
@@ -728,11 +732,12 @@ export function SwipeCardDeck({
                     overflow: 'hidden',
                   }}
                 >
-                  {showImages && nextArticle.image_url ? (
+                  {showImages && nextArticle.image_url && !nextImageLoadFailed ? (
                     <Image
                       source={{ uri: nextArticle.image_url }}
                       contentFit="cover"
                       blurRadius={Platform.OS === 'web' ? 0 : 6}
+                      onError={() => setNextImageLoadFailed(true)}
                       style={{
                         width: '100%',
                         height: '100%',
@@ -869,105 +874,106 @@ export function SwipeCardDeck({
                 </View>
               ) : (
                 <>
-                  {!showImages || currentArticle.image_url ? (
-                    <View
-                      style={{
-                        position: 'relative',
-                        width: '100%',
-                        height: compactImage ? 88 : 175,
-                      }}
-                    >
-                      {showImages && currentArticle.image_url ? (
-                        <Image
-                          source={{ uri: currentArticle.image_url }}
-                          contentFit="cover"
-                          transition={180}
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            backgroundColor: '#F1EFEA',
-                          }}
-                        />
-                      ) : (
-                        <TopicPatternBanner topic={currentArticle.topic} />
-                      )}
-                      {activeTopic ? (
-                        <View
-                          style={{
-                            position: 'absolute',
-                            top: 12,
-                            left: 12,
-                            right: 12,
-                            zIndex: 10,
-                            backgroundColor: 'rgba(28, 25, 23, 0.72)',
-                            borderRadius: 999,
-                            paddingLeft: 14,
-                            paddingRight: 8,
-                            paddingVertical: 5,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                          }}
+                  <View
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: compactImage ? 88 : 175,
+                    }}
+                  >
+                    {showImages &&
+                      currentArticle.image_url &&
+                      !imageLoadFailed ? (
+                      <Image
+                        source={{ uri: currentArticle.image_url }}
+                        contentFit="cover"
+                        transition={180}
+                        onError={() => setImageLoadFailed(true)}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          backgroundColor: '#F1EFEA',
+                        }}
+                      />
+                    ) : (
+                      <TopicPatternBanner topic={currentArticle.topic} />
+                    )}
+                    {activeTopic ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 12,
+                          left: 12,
+                          right: 12,
+                          zIndex: 10,
+                          backgroundColor: 'rgba(28, 25, 23, 0.72)',
+                          borderRadius: 999,
+                          paddingLeft: 14,
+                          paddingRight: 8,
+                          paddingVertical: 5,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <Text
+                          className="text-[12px] font-medium text-white flex-shrink"
+                          numberOfLines={1}
                         >
-                          <Text
-                            className="text-[12px] font-medium text-white flex-shrink"
-                            numberOfLines={1}
-                          >
-                            {activeTopic} ({Math.min(currentIndex + 1, articles.length)}/
-                            {articles.length})
-                          </Text>
-                          <Pressable
-                            onPressIn={suppressNextFlip}
-                            onPress={(e) => {
-                              e.stopPropagation?.();
-                              onClearTopic?.();
-                            }}
-                            accessibilityLabel="Clear topic filter"
-                            hitSlop={8}
-                            style={{
-                              width: 22,
-                              height: 22,
-                              borderRadius: 999,
-                              backgroundColor: 'rgba(255, 255, 255, 0.18)',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            <Text className="text-[11px] font-bold text-white leading-none">
-                              ✕
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : currentArticle.topic ? (
+                          {activeTopic} ({Math.min(currentIndex + 1, articles.length)}/
+                          {articles.length})
+                        </Text>
                         <Pressable
                           onPressIn={suppressNextFlip}
                           onPress={(e) => {
                             e.stopPropagation?.();
-                            if (currentArticle.topic) {
-                              onSelectTopic?.(currentArticle.topic);
-                            }
+                            onClearTopic?.();
                           }}
-                          accessibilityLabel={`Filter by ${currentArticle.topic}`}
-                          hitSlop={6}
+                          accessibilityLabel="Clear topic filter"
+                          hitSlop={8}
                           style={{
-                            position: 'absolute',
-                            top: 12,
-                            left: 12,
-                            zIndex: 10,
-                            backgroundColor: 'rgba(28, 25, 23, 0.65)',
+                            width: 22,
+                            height: 22,
                             borderRadius: 999,
-                            paddingHorizontal: 11,
-                            paddingVertical: 4,
+                            backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                            alignItems: 'center',
+                            justifyContent: 'center',
                           }}
                         >
-                          <Text className="text-[11.5px] font-medium text-white">
-                            {currentArticle.topic}
+                          <Text className="text-[11px] font-bold text-white leading-none">
+                            ✕
                           </Text>
                         </Pressable>
-                      ) : null}
-                    </View>
-                  ) : null}
+                      </View>
+                    ) : currentArticle.topic ? (
+                      <Pressable
+                        onPressIn={suppressNextFlip}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          if (currentArticle.topic) {
+                            onSelectTopic?.(currentArticle.topic);
+                          }
+                        }}
+                        accessibilityLabel={`Filter by ${currentArticle.topic}`}
+                        hitSlop={6}
+                        style={{
+                          position: 'absolute',
+                          top: 12,
+                          left: 12,
+                          zIndex: 10,
+                          backgroundColor: 'rgba(28, 25, 23, 0.65)',
+                          borderRadius: 999,
+                          paddingHorizontal: 11,
+                          paddingVertical: 4,
+                        }}
+                      >
+                        <Text className="text-[11.5px] font-medium text-white">
+                          {currentArticle.topic}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
 
                   <View
                     onLayout={(e) => {

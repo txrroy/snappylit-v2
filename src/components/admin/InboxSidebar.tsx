@@ -175,7 +175,7 @@ export function InboxSidebar({
             All Editions
           </DSText>
           <SidebarItem
-            label="All Pending"
+            label="In Review"
             count={allPendingCount}
             dotColor={theme.colors.tones.warning.dot}
             active={isSameFolder(selectedFolder, { type: 'all-pending' })}
@@ -212,7 +212,7 @@ export function InboxSidebar({
             onPress={() => onSelectFolder({ type: 'today-published' })}
           />
           <SidebarItem
-            label="Pending"
+            label="In Review"
             count={todayPendingCount}
             dotColor={theme.colors.tones.warning.dot}
             active={isSameFolder(selectedFolder, { type: 'today-pending' })}
