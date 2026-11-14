@@ -56,6 +56,7 @@ function AdminDashboardContent() {
     authError,
     signIn,
     signUp,
+    signInWithGoogle,
     logOut,
     getIdToken,
   } = useAdminAuth();
@@ -239,6 +240,7 @@ function AdminDashboardContent() {
           }
           onSignIn={signIn}
           onSignUp={signUp}
+          onGoogleSignIn={signInWithGoogle}
           onSignOut={logOut}
         />
       </SafeAreaView>

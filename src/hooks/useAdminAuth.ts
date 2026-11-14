@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Platform } from 'react-native';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
   signOut,
   type User,
 } from 'firebase/auth';
@@ -52,6 +55,21 @@ export function useAdminAuth() {
     }
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    setAuthError(null);
+    if (Platform.OS !== 'web') {
+      setAuthError('Google sign-in is only supported on web. Use email and password.');
+      return;
+    }
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Google sign-in failed');
+    }
+  }, []);
+
   const logOut = useCallback(async () => {
     setAuthError(null);
     await signOut(auth);
@@ -73,6 +91,7 @@ export function useAdminAuth() {
     authError,
     signIn,
     signUp,
+    signInWithGoogle,
     logOut,
     getIdToken,
   };

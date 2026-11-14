@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import {
   useDSTheme,
   DSCard,
@@ -14,6 +14,7 @@ interface AdminLoginScreenProps {
   unauthorizedEmail: string | null;
   onSignIn: (email: string, password: string) => Promise<void>;
   onSignUp: (email: string, password: string) => Promise<void>;
+  onGoogleSignIn?: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }
 
@@ -24,6 +25,7 @@ export function AdminLoginScreen({
   unauthorizedEmail,
   onSignIn,
   onSignUp,
+  onGoogleSignIn,
   onSignOut,
 }: AdminLoginScreenProps) {
   const { theme } = useDSTheme();
@@ -178,6 +180,24 @@ export function AdminLoginScreen({
           loading={submitting}
           onPress={() => handleAction('signin')}
         />
+
+        {Platform.OS === 'web' && onGoogleSignIn ? (
+          <DSButton
+            label="Continue with Google"
+            variant="secondary"
+            size="lg"
+            disabled={submitting}
+            onPress={async () => {
+              setSubmitting(true);
+              try {
+                await onGoogleSignIn();
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            style={{ marginTop: theme.spacing.md }}
+          />
+        ) : null}
 
         {IS_EMULATOR ? (
           <DSButton
