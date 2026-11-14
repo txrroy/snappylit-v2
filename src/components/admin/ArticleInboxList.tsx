@@ -47,6 +47,7 @@ interface ArticleInboxListProps {
   onChangeFilters: (next: ArticleFilterState) => void;
   onSelectArticle: (id: string) => void;
   onBatchApprove?: (ids: string[]) => Promise<void>;
+  onBatchReject?: (ids: string[]) => Promise<void>;
 }
 
 export function isHighConfidenceReady(article: Article): boolean {
@@ -158,10 +159,63 @@ export function ArticleInboxList({
   onChangeFilters,
   onSelectArticle,
   onBatchApprove,
+  onBatchReject,
 }: ArticleInboxListProps) {
   const { theme } = useDSTheme();
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const visibleSelectedIds = useMemo(
+    () =>
+      filteredArticles
+        .filter((a) => selectedIds.has(a.id))
+        .map((a) => a.id),
+    [filteredArticles, selectedIds]
+  );
+
+  const allVisibleSelected =
+    filteredArticles.length > 0 &&
+    visibleSelectedIds.length === filteredArticles.length;
+
+  const toggleSelectId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredArticles.map((a) => a.id)));
+    }
+  };
+
+  const handleBulkApproveSelected = async () => {
+    if (!onBatchApprove || visibleSelectedIds.length === 0) return;
+    setBatchBusy(true);
+    try {
+      await onBatchApprove(visibleSelectedIds);
+      setSelectedIds(new Set());
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const handleBulkRejectSelected = async () => {
+    if (!onBatchReject || visibleSelectedIds.length === 0) return;
+    setBatchBusy(true);
+    try {
+      await onBatchReject(visibleSelectedIds);
+      setSelectedIds(new Set());
+    } finally {
+      setBatchBusy(false);
+    }
+  };
 
   const { needsJudgment, readyToBatch } = useMemo(() => {
     const drafts = filteredArticles.filter((a) => a.status === 'draft');
@@ -536,6 +590,79 @@ export function ArticleInboxList({
             ) : null}
           </ScrollView>
         ) : null}
+
+        {/* Bulk Selection Bar */}
+        {filteredArticles.length > 0 && (onBatchApprove || onBatchReject) ? (
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.spacing.sm,
+              paddingTop: theme.spacing.xs,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: theme.spacing.sm,
+              }}
+            >
+              <DSButton
+                label={
+                  allVisibleSelected
+                    ? 'Deselect All'
+                    : `Select All (${filteredArticles.length})`
+                }
+                variant="secondary"
+                size="sm"
+                pill
+                disabled={batchBusy}
+                onPress={toggleSelectAll}
+              />
+              {visibleSelectedIds.length > 0 ? (
+                <DSText variant="caption" weight="semibold" tone="primary">
+                  {visibleSelectedIds.length} selected
+                </DSText>
+              ) : null}
+            </View>
+
+            {visibleSelectedIds.length > 0 ? (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: theme.spacing.sm,
+                }}
+              >
+                {onBatchReject ? (
+                  <DSButton
+                    label={`Reject Selected (${visibleSelectedIds.length})`}
+                    variant="danger"
+                    size="sm"
+                    pill
+                    loading={batchBusy}
+                    disabled={batchBusy}
+                    onPress={handleBulkRejectSelected}
+                  />
+                ) : null}
+                {onBatchApprove ? (
+                  <DSButton
+                    label={`Approve Selected (${visibleSelectedIds.length})`}
+                    variant="accent"
+                    size="sm"
+                    pill
+                    loading={batchBusy}
+                    disabled={batchBusy}
+                    onPress={handleBulkApproveSelected}
+                  />
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       {/* Article Rows */}
@@ -613,6 +740,33 @@ export function ArticleInboxList({
                           },
                         ]}
                       >
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            toggleSelectId(item.id);
+                          }}
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 4,
+                            borderWidth: 1.5,
+                            borderColor: selectedIds.has(item.id)
+                              ? theme.colors.accent
+                              : theme.colors.borderStrong,
+                            backgroundColor: selectedIds.has(item.id)
+                              ? theme.colors.accent
+                              : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: theme.spacing.sm,
+                          }}
+                        >
+                          {selectedIds.has(item.id) ? (
+                            <DSText variant="micro" weight="bold" tone="inverse">
+                              ✓
+                            </DSText>
+                          ) : null}
+                        </Pressable>
                         <View
                           style={{
                             width: theme.spacing.sm,
@@ -760,6 +914,33 @@ export function ArticleInboxList({
                           },
                         ]}
                       >
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            toggleSelectId(item.id);
+                          }}
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 4,
+                            borderWidth: 1.5,
+                            borderColor: selectedIds.has(item.id)
+                              ? theme.colors.accent
+                              : theme.colors.borderStrong,
+                            backgroundColor: selectedIds.has(item.id)
+                              ? theme.colors.accent
+                              : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: theme.spacing.sm,
+                          }}
+                        >
+                          {selectedIds.has(item.id) ? (
+                            <DSText variant="micro" weight="bold" tone="inverse">
+                              ✓
+                            </DSText>
+                          ) : null}
+                        </Pressable>
                         <View
                           style={{
                             width: theme.spacing.sm,
@@ -873,7 +1054,34 @@ export function ArticleInboxList({
                     },
                   ]}
                 >
-                  {/* Status dot */}
+                  {/* Checkbox + Status dot */}
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      toggleSelectId(item.id);
+                    }}
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      borderWidth: 1.5,
+                      borderColor: selectedIds.has(item.id)
+                        ? theme.colors.accent
+                        : theme.colors.borderStrong,
+                      backgroundColor: selectedIds.has(item.id)
+                        ? theme.colors.accent
+                        : 'transparent',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: theme.spacing.sm,
+                    }}
+                  >
+                    {selectedIds.has(item.id) ? (
+                      <DSText variant="micro" weight="bold" tone="inverse">
+                        ✓
+                      </DSText>
+                    ) : null}
+                  </Pressable>
                   <View
                     style={{
                       width: theme.spacing.sm,

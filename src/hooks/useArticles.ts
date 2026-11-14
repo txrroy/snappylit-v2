@@ -1,26 +1,34 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   collection,
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
   getDocs,
   onSnapshot,
   doc,
   updateDoc,
   arrayUnion,
+  type QueryDocumentSnapshot,
+  type DocumentData,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { Article } from '@/types/article';
+
+const OLDER_BATCH_SIZE = 10;
 
 interface UseArticlesResult {
   articles: Article[];
   olderArticles: Article[];
   loading: boolean;
   loadingOlder: boolean;
+  hasMoreOlder: boolean;
   error: string | null;
   isShowingFallback: boolean;
   loadOlderArticles: () => Promise<void>;
+  loadMoreOlderArticles: () => Promise<void>;
 }
 
 /**
@@ -33,6 +41,8 @@ export function usePublishedArticles(): UseArticlesResult {
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderLoaded, setOlderLoaded] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const lastOlderDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isShowingFallback, setIsShowingFallback] = useState(false);
 
@@ -129,14 +139,60 @@ export function usePublishedArticles(): UseArticlesResult {
     }
   }, [articles, loadingOlder, olderLoaded]);
 
+  const loadMoreOlderArticles = useCallback(async () => {
+    if (loadingOlder || !hasMoreOlder) return;
+    setLoadingOlder(true);
+    try {
+      const articlesRef = collection(db, 'articles');
+      const currentDate =
+        articles[0]?.date ?? new Date().toISOString().split('T')[0];
+
+      const constraints = [
+        where('status', '==', 'published'),
+        where('date', '<', currentDate),
+        orderBy('date', 'desc'),
+        ...(lastOlderDocRef.current ? [startAfter(lastOlderDocRef.current)] : []),
+        limit(OLDER_BATCH_SIZE + 1),
+      ];
+
+      const snapshot = await getDocs(query(articlesRef, ...constraints));
+      const docs = snapshot.docs;
+      const hasMore = docs.length > OLDER_BATCH_SIZE;
+      const pageDocs = hasMore ? docs.slice(0, OLDER_BATCH_SIZE) : docs;
+
+      if (pageDocs.length > 0) {
+        lastOlderDocRef.current = pageDocs[pageDocs.length - 1];
+      }
+
+      const newItems = pageDocs.map((d) => ({
+        ...(d.data() as Omit<Article, 'id'>),
+        id: d.id,
+      }));
+
+      setOlderArticles((prev) => {
+        const seen = new Set(prev.map((a) => a.id));
+        return [...prev, ...newItems.filter((a) => !seen.has(a.id))];
+      });
+      setHasMoreOlder(hasMore);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to load older articles'
+      );
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [articles, hasMoreOlder, loadingOlder]);
+
   return {
     articles,
     olderArticles,
     loading,
     loadingOlder,
+    hasMoreOlder,
     error,
     isShowingFallback,
     loadOlderArticles,
+    loadMoreOlderArticles,
   };
 }
 
@@ -281,6 +337,7 @@ interface UseAdminArticlesResult {
     adminUid: string
   ) => Promise<void>;
   batchApproveArticles: (ids: string[], adminUid: string) => Promise<void>;
+  batchRejectArticles: (ids: string[]) => Promise<void>;
   rejectArticle: (id: string, reason?: string) => Promise<void>;
   revertToDraft: (id: string) => Promise<void>;
   confirmKidsTopic: (id: string, confirmed: boolean) => Promise<void>;
@@ -411,6 +468,19 @@ export function useAdminArticles(enabled = true): UseAdminArticlesResult {
     []
   );
 
+  const batchRejectArticles = useCallback(async (ids: string[]) => {
+    const now = new Date().toISOString();
+    await Promise.all(
+      ids.map((id) =>
+        updateDoc(doc(db, 'articles', id), {
+          status: 'rejected',
+          rejected_at: now,
+          decision_history: arrayUnion({ action: 'rejected', at: now }),
+        })
+      )
+    );
+  }, []);
+
   return {
     articles,
     loading,
@@ -418,6 +488,7 @@ export function useAdminArticles(enabled = true): UseAdminArticlesResult {
     saveChanges,
     approveArticle,
     batchApproveArticles,
+    batchRejectArticles,
     rejectArticle,
     revertToDraft,
     confirmKidsTopic,

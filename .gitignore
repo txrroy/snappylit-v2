@@ -45,3 +45,7 @@ example
 
 # backfill checkpoint data
 agent/backfill-articles.json
+
+# firebase emulator debug logs
+firestore-debug.log
+firebase-debug.log

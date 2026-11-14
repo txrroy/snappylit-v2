@@ -35,19 +35,19 @@ export const typography = {
 
 export const fontFamilies = {
   sans: Platform.select({
-    ios: 'system-ui',
-    web: "'Inter', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
-    default: 'sans-serif',
+    ios: 'Cabinet Grotesk',
+    web: "'Cabinet Grotesk', 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+    default: 'Cabinet Grotesk',
   }),
   serif: Platform.select({
-    ios: 'Georgia',
-    web: "'Source Serif 4', 'Newsreader', Georgia, 'Times New Roman', serif",
-    default: 'serif',
+    ios: 'Cabinet Grotesk',
+    web: "'Cabinet Grotesk', 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+    default: 'Cabinet Grotesk',
   }),
   mono: Platform.select({
-    ios: 'ui-monospace',
-    web: "ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace",
-    default: 'monospace',
+    ios: 'Cabinet Grotesk',
+    web: "'Cabinet Grotesk', 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+    default: 'Cabinet Grotesk',
   }),
 } as const;
 

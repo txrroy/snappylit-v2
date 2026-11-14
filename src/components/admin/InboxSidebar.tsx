@@ -2,6 +2,8 @@ import { View, Pressable, ScrollView } from 'react-native';
 import { useDSTheme, DSText } from '@/design-system';
 
 export type InboxFolder =
+  | { type: 'all-pending' }
+  | { type: 'all-published' }
   | { type: 'today-published' }
   | { type: 'today-pending' }
   | { type: 'older-date'; date: string };
@@ -12,6 +14,8 @@ export interface OlderDateEntry {
 }
 
 interface InboxSidebarProps {
+  allPendingCount: number;
+  allPublishedCount: number;
   todayPublishedCount: number;
   todayPendingCount: number;
   olderDates: OlderDateEntry[];
@@ -134,6 +138,8 @@ function SidebarItem({
 }
 
 export function InboxSidebar({
+  allPendingCount,
+  allPublishedCount,
   todayPublishedCount,
   todayPendingCount,
   olderDates,
@@ -154,6 +160,36 @@ export function InboxSidebar({
         style={{ paddingVertical: theme.spacing.md }}
         className="max-h-56 md:max-h-none md:flex-1"
       >
+        {/* Heading 0: All Editions */}
+        <View style={{ marginBottom: theme.spacing.lg }}>
+          <DSText
+            variant="micro"
+            weight="bold"
+            tone="tertiary"
+            uppercase
+            style={{
+              paddingHorizontal: theme.spacing.lg,
+              paddingBottom: theme.spacing.xs,
+            }}
+          >
+            All Editions
+          </DSText>
+          <SidebarItem
+            label="All Pending"
+            count={allPendingCount}
+            dotColor={theme.colors.tones.warning.dot}
+            active={isSameFolder(selectedFolder, { type: 'all-pending' })}
+            onPress={() => onSelectFolder({ type: 'all-pending' })}
+          />
+          <SidebarItem
+            label="All Published"
+            count={allPublishedCount}
+            dotColor={theme.colors.tones.success.dot}
+            active={isSameFolder(selectedFolder, { type: 'all-published' })}
+            onPress={() => onSelectFolder({ type: 'all-published' })}
+          />
+        </View>
+
         {/* Heading 1: Today */}
         <View style={{ marginBottom: theme.spacing.lg }}>
           <DSText

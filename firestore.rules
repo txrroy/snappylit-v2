@@ -26,5 +26,11 @@ service cloud.firestore {
     match /policy_versions/{versionId} {
       allow read, write: if isEditor();
     }
+
+    match /feedback/{feedbackId} {
+      allow create: if true;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note']);
+      allow read: if isEditor();
+    }
   }
 }

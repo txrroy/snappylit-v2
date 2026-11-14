@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   ScrollView,
@@ -19,6 +20,10 @@ import type { Article } from '@/types/article';
 interface NewspaperFrontPageProps {
   articles: Article[];
   isShowingFallback?: boolean;
+  olderArticles?: Article[];
+  loadingOlder?: boolean;
+  hasMoreOlder?: boolean;
+  onLoadOlder?: () => Promise<void> | void;
 }
 
 function getColumnCount(width: number): number {
@@ -128,13 +133,16 @@ function LeadStory({ article }: { article: Article }) {
 function ColumnStory({
   article,
   isLastInColumn,
+  showDate = false,
 }: {
   article: Article;
   isLastInColumn: boolean;
+  showDate?: boolean;
 }) {
   const [showContext, setShowContext] = useState(false);
   const sourceLabel = getSourceLabel(article);
   const kicker = article.topic ? article.topic.toUpperCase() : null;
+  const dateLabel = showDate ? formatEditionDate(article.date, 'short') : null;
 
   return (
     <View
@@ -144,8 +152,16 @@ function ColumnStory({
           : 'py-5 border-b border-stone-200/90'
       }
     >
-      {kicker || sourceLabel ? (
-        <View className="flex-row items-center gap-1.5 mb-2">
+      {kicker || sourceLabel || dateLabel ? (
+        <View className="flex-row flex-wrap items-center gap-1.5 mb-2">
+          {dateLabel ? (
+            <Text className="text-[10.5px] font-semibold text-stone-500">
+              {dateLabel}
+            </Text>
+          ) : null}
+          {dateLabel && (kicker || sourceLabel) ? (
+            <Text className="text-[10.5px] text-stone-400">•</Text>
+          ) : null}
           {kicker ? (
             <Text className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-accent">
               {kicker}
@@ -223,6 +239,10 @@ function ColumnStory({
 export function NewspaperFrontPage({
   articles,
   isShowingFallback = false,
+  olderArticles = [],
+  loadingOlder = false,
+  hasMoreOlder = false,
+  onLoadOlder,
 }: NewspaperFrontPageProps) {
   const { width } = useWindowDimensions();
   const numColumns = getColumnCount(width);
@@ -236,6 +256,11 @@ export function NewspaperFrontPage({
   const columns: Article[][] = Array.from({ length: numColumns }, () => []);
   restArticles.forEach((article, index) => {
     columns[index % numColumns].push(article);
+  });
+
+  const olderColumns: Article[][] = Array.from({ length: numColumns }, () => []);
+  olderArticles.forEach((article, index) => {
+    olderColumns[index % numColumns].push(article);
   });
 
   return (
@@ -264,12 +289,19 @@ export function NewspaperFrontPage({
             </View>
           </View>
 
-          <Text
-            style={{ fontFamily: Fonts?.serif }}
-            className="text-[44px] leading-[50px] font-bold text-ink text-center tracking-[-0.8px]"
-          >
-            {APP_CONFIG.title}
-          </Text>
+          <View className="flex-row items-center justify-center gap-3">
+            <Image
+              source={require('../../../assets/images/snappylit-logo-v3.png')}
+              contentFit="contain"
+              style={{ width: 38, height: 38, borderRadius: 9 }}
+            />
+            <Text
+              style={{ fontFamily: Fonts?.serif }}
+              className="text-[44px] leading-[50px] font-bold text-ink text-center tracking-[-0.8px]"
+            >
+              {APP_CONFIG.title}
+            </Text>
+          </View>
         </View>
 
         {/* Classic Newspaper Double Rule */}
@@ -327,6 +359,74 @@ export function NewspaperFrontPage({
             End of Edition • {formattedDate}
           </Text>
         </View>
+
+        {/* Appended Older News Archive */}
+        {olderArticles.length > 0 ? (
+          <View className="mt-10">
+            <View className="h-[2px] bg-stone-800" />
+            <View className="h-[1px] bg-stone-300 mt-[3px]" />
+            <View className="py-3 border-b border-stone-200 flex-row items-center justify-between">
+              <Text className="text-[11px] font-bold uppercase tracking-[0.14em] text-stone-500">
+                Older News
+              </Text>
+              <Text className="text-[11px] text-stone-400">
+                {olderArticles.length} {olderArticles.length === 1 ? 'Story' : 'Stories'} loaded
+              </Text>
+            </View>
+
+            <View className="flex-row items-start pt-2">
+              {olderColumns.map((columnItems, colIndex) => {
+                const isFirst = colIndex === 0;
+                const isLast = colIndex === olderColumns.length - 1;
+                return (
+                  <View
+                    key={`older-${colIndex}`}
+                    className={[
+                      'flex-1',
+                      !isFirst ? 'pl-6' : '',
+                      !isLast ? 'pr-6 border-r border-stone-200/90' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    {columnItems.map((article, itemIdx) => (
+                      <ColumnStory
+                        key={article.id}
+                        article={article}
+                        isLastInColumn={itemIdx === columnItems.length - 1}
+                        showDate
+                      />
+                    ))}
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Load Older News Action */}
+        {onLoadOlder && (hasMoreOlder || loadingOlder || olderArticles.length > 0) ? (
+          <View className="mt-8 items-center">
+            {hasMoreOlder || loadingOlder ? (
+              <Pressable
+                onPress={() => void onLoadOlder()}
+                disabled={loadingOlder}
+                className="px-6 py-2.5 rounded-full border border-stone-300 bg-white active:opacity-70 flex-row items-center gap-2"
+              >
+                {loadingOlder ? (
+                  <ActivityIndicator size="small" color="#0D9488" />
+                ) : null}
+                <Text className="text-[13px] font-semibold text-ink">
+                  {loadingOlder ? 'Loading older news...' : 'Load older news'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text className="text-[12px] text-stone-400">
+                No more older news available.
+              </Text>
+            )}
+          </View>
+        ) : null}
       </View>
     </ScrollView>
   );

@@ -610,23 +610,19 @@ export function EditorOverviewPane({
                   return (
                     <View key={item.id} style={{ position: 'relative' }}>
                       {idx > 0 ? <DSDivider /> : null}
-                      <Pressable
-                        onHoverIn={() => setHoveredId(item.id)}
-                        onHoverOut={() =>
+                      <View
+                        onPointerEnter={() => setHoveredId(item.id)}
+                        onPointerLeave={() =>
                           setHoveredId((prev) =>
                             prev === item.id ? null : prev
                           )
                         }
-                        onPress={() => {
-                          setKeyboardFocusedIdx(-1);
-                          onSelectArticle(item.id);
-                        }}
-                        style={({ pressed }) => ({
+                        style={{
                           paddingHorizontal: theme.spacing.lg,
                           paddingVertical: theme.spacing.md,
                           backgroundColor: isSelected
                             ? theme.colors.surfaceSelected
-                            : isHovered || pressed
+                            : isHovered
                               ? theme.colors.surfaceHover
                               : theme.colors.surface,
                           borderLeftWidth: 3,
@@ -637,10 +633,16 @@ export function EditorOverviewPane({
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           gap: theme.spacing.md,
-                        })}
+                        }}
                       >
                         {/* Left: Status (icon + text), Beat, Age, 2-line Headline, Lowest Sub-score + Reason */}
-                        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                        <Pressable
+                          onPress={() => {
+                            setKeyboardFocusedIdx(-1);
+                            onSelectArticle(item.id);
+                          }}
+                          style={{ flex: 1, minWidth: 0, gap: 4 }}
+                        >
                           <View
                             style={{
                               flexDirection: 'row',
@@ -712,9 +714,9 @@ export function EditorOverviewPane({
                             {' — '}
                             {reason}
                           </DSText>
-                        </View>
+                        </Pressable>
 
-                        {/* Right: Actions shown only on hovered or keyboard-focused row */}
+                        {/* Right: Actions shown only on hovered or keyboard-focused row (sibling to left Pressable) */}
                         <View
                           style={{
                             flexDirection: 'row',
@@ -731,8 +733,7 @@ export function EditorOverviewPane({
                                   variant="secondary"
                                   size="sm"
                                   disabled={busyId !== null}
-                                  onPress={(e) => {
-                                    e.stopPropagation?.();
+                                  onPress={() => {
                                     setRejectPickerId(null);
                                     onSelectArticle(item.id);
                                   }}
@@ -744,8 +745,7 @@ export function EditorOverviewPane({
                                   size="sm"
                                   loading={isBusy}
                                   disabled={busyId !== null}
-                                  onPress={(e) => {
-                                    e.stopPropagation?.();
+                                  onPress={() => {
                                     setRejectPickerId(null);
                                     void handleInlineApprove(item);
                                   }}
@@ -756,8 +756,7 @@ export function EditorOverviewPane({
                                 variant="ghost"
                                 size="sm"
                                 disabled={busyId !== null}
-                                onPress={(e) => {
-                                  e.stopPropagation?.();
+                                onPress={() => {
                                   setRejectPickerId((prev) =>
                                     prev === item.id ? null : item.id
                                   );
@@ -766,10 +765,7 @@ export function EditorOverviewPane({
                             </>
                           ) : (
                             <Pressable
-                              onPress={(e) => {
-                                e.stopPropagation?.();
-                                onSelectArticle(item.id);
-                              }}
+                              onPress={() => onSelectArticle(item.id)}
                               style={({ pressed }) => ({
                                 paddingHorizontal: theme.spacing.sm,
                                 paddingVertical: theme.spacing.xs,
@@ -786,7 +782,7 @@ export function EditorOverviewPane({
                             </Pressable>
                           )}
                         </View>
-                      </Pressable>
+                      </View>
 
                       {/* Reject reason dropdown/picker */}
                       {isPickerOpen ? (
@@ -1131,13 +1127,13 @@ export function EditorOverviewPane({
 
       {undoToast ? (
         <View
+          pointerEvents="box-none"
           style={{
             position: 'absolute',
             bottom: theme.spacing.xl,
             left: theme.spacing.xl,
             right: theme.spacing.xl,
             alignItems: 'center',
-            pointerEvents: 'box-none',
           }}
         >
           <DSSurface

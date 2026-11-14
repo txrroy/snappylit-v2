@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { AdminLoginScreen } from '@/components/admin/AdminLoginScreen';
 import { AnalyticsPane } from '@/components/admin/AnalyticsPane';
 import {
@@ -66,6 +67,7 @@ function AdminDashboardContent() {
     saveChanges,
     approveArticle,
     batchApproveArticles,
+    batchRejectArticles,
     rejectArticle,
     revertToDraft,
     confirmKidsTopic,
@@ -92,7 +94,7 @@ function AdminDashboardContent() {
   const [livePipelineOpen, setLivePipelineOpen] = useState(false);
 
   const [selectedFolder, setSelectedFolder] = useState<InboxFolder>({
-    type: 'today-pending',
+    type: 'all-pending',
   });
   const [filters, setFilters] = useState<ArticleFilterState>(INITIAL_FILTERS);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(
@@ -101,12 +103,36 @@ function AdminDashboardContent() {
 
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  const { todayPublished, todayPending, olderDates } = useMemo(() => {
+  const effectiveOverviewDate = useMemo(() => {
+    if (articles.some((a) => a.date === today)) {
+      return today;
+    }
+    let latest = today;
+    for (const a of articles) {
+      if (a.date > latest || latest === today) {
+        latest = a.date;
+      }
+    }
+    return latest;
+  }, [articles, today]);
+
+  const {
+    allPending,
+    allPublished,
+    todayPublished,
+    todayPending,
+    olderDates,
+  } = useMemo(() => {
+    const allPend = [];
+    const allPub = [];
     const pub = [];
     const pend = [];
     const olderMap = new Map<string, number>();
 
     for (const article of articles) {
+      if (article.status === 'draft') allPend.push(article);
+      else if (article.status === 'published') allPub.push(article);
+
       if (article.date === today) {
         if (article.status === 'published') pub.push(article);
         else if (article.status === 'draft') pend.push(article);
@@ -120,6 +146,8 @@ function AdminDashboardContent() {
       .map(([date, count]) => ({ date, count }));
 
     return {
+      allPending: allPend,
+      allPublished: allPub,
       todayPublished: pub,
       todayPending: pend,
       olderDates: dates,
@@ -127,10 +155,19 @@ function AdminDashboardContent() {
   }, [articles, today]);
 
   const folderArticles = useMemo(() => {
+    if (selectedFolder.type === 'all-pending') return allPending;
+    if (selectedFolder.type === 'all-published') return allPublished;
     if (selectedFolder.type === 'today-published') return todayPublished;
     if (selectedFolder.type === 'today-pending') return todayPending;
     return articles.filter((a) => a.date === selectedFolder.date);
-  }, [articles, selectedFolder, todayPublished, todayPending]);
+  }, [
+    articles,
+    selectedFolder,
+    allPending,
+    allPublished,
+    todayPublished,
+    todayPending,
+  ]);
 
   const filteredArticles = useMemo(
     () => applyArticleFilters(folderArticles, filters),
@@ -138,6 +175,8 @@ function AdminDashboardContent() {
   );
 
   const folderTitle = useMemo(() => {
+    if (selectedFolder.type === 'all-pending') return 'All Pending';
+    if (selectedFolder.type === 'all-published') return 'All Published';
     if (selectedFolder.type === 'today-published') return 'Today · Published';
     if (selectedFolder.type === 'today-pending') return 'Today · Pending';
     return formatEditionDate(selectedFolder.date);
@@ -252,20 +291,11 @@ function AdminDashboardContent() {
                 gap: theme.spacing.sm,
               }}
             >
-              <View
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: theme.radii.pill,
-                  backgroundColor: theme.colors.textPrimary,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <DSText variant="micro" weight="bold" tone="inverse">
-                  SL
-                </DSText>
-              </View>
+              <Image
+                source={require('../../../assets/images/snappylit-logo-v3.png')}
+                contentFit="contain"
+                style={{ width: 28, height: 28, borderRadius: 7 }}
+              />
               <DSText variant="footnote" weight="bold" tone="primary">
                 SnappyLit Studio
               </DSText>
@@ -391,7 +421,7 @@ function AdminDashboardContent() {
       ) : activeView === 'overview' ? (
         <EditorOverviewPane
           articles={articles}
-          today={today}
+          today={effectiveOverviewDate}
           adminUid={user.uid}
           drawerOpen={Boolean(selectedArticleId) || livePipelineOpen}
           selectedArticleId={selectedArticleId}
@@ -417,6 +447,8 @@ function AdminDashboardContent() {
           className="flex-col md:flex-row"
         >
           <InboxSidebar
+            allPendingCount={allPending.length}
+            allPublishedCount={allPublished.length}
             todayPublishedCount={todayPublished.length}
             todayPendingCount={todayPending.length}
             olderDates={olderDates}
@@ -434,6 +466,7 @@ function AdminDashboardContent() {
             onChangeFilters={setFilters}
             onSelectArticle={setSelectedArticleId}
             onBatchApprove={(ids) => batchApproveArticles(ids, user.uid)}
+            onBatchReject={batchRejectArticles}
           />
 
           <ArticleReaderDrawer
