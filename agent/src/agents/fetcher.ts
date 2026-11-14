@@ -28,7 +28,7 @@ function normalizeTokens(title: string): Set<string> {
   return new Set(words);
 }
 
-function isSameEvent(a: RawRssItem, b: RawRssItem): boolean {
+export function isSameEvent(a: RawRssItem, b: RawRssItem): boolean {
   if (a.link === b.link) return true;
   const titleA = a.title.toLowerCase().trim();
   const titleB = b.title.toLowerCase().trim();

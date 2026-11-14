@@ -52,6 +52,32 @@ export async function getExistingArticleUrls(
   return urls;
 }
 
+export async function getAllExistingArticleUrls(db: Firestore): Promise<Set<string>> {
+  const snapshot = await db
+    .collection('articles')
+    .select('original_url', 'alternate_urls')
+    .get();
+
+  const urls = new Set<string>();
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as {
+      original_url?: unknown;
+      alternate_urls?: unknown;
+    };
+    if (typeof data.original_url === 'string' && data.original_url) {
+      urls.add(data.original_url);
+    }
+    if (Array.isArray(data.alternate_urls)) {
+      for (const alt of data.alternate_urls) {
+        if (typeof alt === 'string' && alt) {
+          urls.add(alt);
+        }
+      }
+    }
+  }
+  return urls;
+}
+
 export async function saveDraftArticles(
   db: Firestore,
   articles: ArticleDocument[]
@@ -60,13 +86,17 @@ export async function saveDraftArticles(
     return 0;
   }
 
-  const batch = db.batch();
-  for (const article of articles) {
-    const docRef = db.collection('articles').doc(article.id);
-    batch.set(docRef, article);
+  const BATCH_LIMIT = 450;
+  for (let i = 0; i < articles.length; i += BATCH_LIMIT) {
+    const chunk = articles.slice(i, i + BATCH_LIMIT);
+    const batch = db.batch();
+    for (const article of chunk) {
+      const docRef = db.collection('articles').doc(article.id);
+      batch.set(docRef, article);
+    }
+    await batch.commit();
   }
 
-  await batch.commit();
   return articles.length;
 }
 
