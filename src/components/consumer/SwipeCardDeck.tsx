@@ -26,11 +26,17 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { TopicPatternBanner } from './TopicPatternBanner';
 
 interface SwipeCardDeckProps {
   articles: Article[];
   onIndexChange?: (index: number) => void;
   onRequestOlderNews?: () => void;
+  activeTopic?: string | null;
+  onSelectTopic?: (topic: string) => void;
+  onClearTopic?: () => void;
+  showOnboardingTips?: boolean;
+  showImages?: boolean;
 }
 
 const FEEDBACK_EMOJIS = [
@@ -65,6 +71,11 @@ export function SwipeCardDeck({
   articles,
   onIndexChange,
   onRequestOlderNews,
+  activeTopic,
+  onSelectTopic,
+  onClearTopic,
+  showOnboardingTips = false,
+  showImages = true,
 }: SwipeCardDeckProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -76,8 +87,11 @@ export function SwipeCardDeck({
     Record<string, 'important' | 'not_worth'>
   >({});
   const [compactImage, setCompactImage] = useState(false);
+  const [flipTipDismissed, setFlipTipDismissed] = useState(false);
+  const [topicTipDismissed, setTopicTipDismissed] = useState(false);
   const textAreaHeightRef = useRef(0);
   const textContentHeightRef = useRef(0);
+  const suppressFlipRef = useRef(false);
   const noteInputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const { width, height } = useWindowDimensions();
 
@@ -114,13 +128,29 @@ export function SwipeCardDeck({
     flipProgress.value = 0;
   }, [flipProgress]);
 
+  const suppressNextFlip = useCallback(() => {
+    suppressFlipRef.current = true;
+    setTimeout(() => {
+      suppressFlipRef.current = false;
+    }, 150);
+  }, []);
+
   const toggleFlip = useCallback(() => {
+    if (suppressFlipRef.current) {
+      suppressFlipRef.current = false;
+      return;
+    }
+    if (currentIndex === 1) {
+      setFlipTipDismissed(true);
+    } else if (currentIndex === 2) {
+      setTopicTipDismissed(true);
+    }
     setIsFlipped((prev) => {
       const next = !prev;
       flipProgress.value = withTiming(next ? 1 : 0, { duration: 320 });
       return next;
     });
-  }, [flipProgress]);
+  }, [currentIndex, flipProgress]);
 
   // Reset deck to first card when the article list changes (e.g. search or mode switch)
   useEffect(() => {
@@ -208,7 +238,7 @@ export function SwipeCardDeck({
       articles[currentIndex + 2]?.image_url,
     ].filter((u): u is string => Boolean(u));
     if (urls.length > 0) {
-      Image.prefetch(urls).catch(() => {});
+      Image.prefetch(urls).catch(() => { });
     }
   }, [currentIndex, articles]);
 
@@ -338,7 +368,7 @@ export function SwipeCardDeck({
 
   const tapGesture = Gesture.Tap()
     .maxDuration(250)
-    .enabled(!isFlipped)
+    .enabled(!isFlipped && currentArticle?.id !== '__ftue_welcome__')
     .onEnd(() => {
       if (isAnimating.value) return;
       runOnJS(toggleFlip)();
@@ -511,8 +541,10 @@ export function SwipeCardDeck({
                   bottom: 0,
                   borderRadius: 26,
                   backgroundColor: '#FFFFFF',
-                  borderWidth: 1,
-                  borderColor: 'rgba(231, 229, 224, 0.9)',
+                  borderWidth: Platform.OS === 'web' ? 0 : 1,
+                  borderColor: 'rgba(28, 25, 23, 0.08)',
+                  boxShadow:
+                    '0 10px 26px -4px rgba(28, 25, 23, 0.18), 0 2px 6px rgba(28, 25, 23, 0.08), 0 0 0 1px rgba(28, 25, 23, 0.08)',
                   shadowColor: '#1C1917',
                   shadowOpacity: 0.1,
                   shadowRadius: 24,
@@ -638,9 +670,11 @@ export function SwipeCardDeck({
               zIndex: 1,
               borderRadius: 26,
               backgroundColor: '#EAE8E2',
-              borderWidth: 1,
-              borderColor: '#D6D3CD',
+              borderWidth: Platform.OS === 'web' ? 0 : 1,
+              borderColor: 'rgba(28, 25, 23, 0.08)',
               transform: [{ translateY: -12 }, { scaleX: 0.88 }],
+              boxShadow:
+                '0 2px 8px rgba(28, 25, 23, 0.05), 0 0 0 1px rgba(28, 25, 23, 0.08)',
               shadowColor: '#1C1917',
               shadowOpacity: 0.04,
               shadowRadius: 8,
@@ -664,46 +698,52 @@ export function SwipeCardDeck({
                 borderRadius: 26,
                 overflow: 'hidden',
                 backgroundColor: '#F4F3EF',
-                borderWidth: 1,
-                borderColor: '#DFDDD7',
+                borderWidth: Platform.OS === 'web' ? 0 : 1,
+                borderColor: 'rgba(28, 25, 23, 0.08)',
+                boxShadow:
+                  '0 4px 12px rgba(28, 25, 23, 0.08), 0 0 0 1px rgba(28, 25, 23, 0.08)',
                 shadowColor: '#1C1917',
                 shadowOpacity: 0.06,
                 shadowRadius: 12,
                 shadowOffset: { width: 0, height: 4 },
                 ...(Platform.OS === 'web'
                   ? ({
-                      isolation: 'isolate',
-                      WebkitMaskImage: '-webkit-radial-gradient(white, black)',
-                    } as Record<string, unknown>)
+                    isolation: 'isolate',
+                    WebkitMaskImage: '-webkit-radial-gradient(white, black)',
+                  } as Record<string, unknown>)
                   : {}),
               },
               nextCardStyle,
             ]}
           >
             <Animated.View style={[{ flex: 1 }, nextCardContentStyle]}>
-              {nextArticle?.image_url ? (
+              {nextArticle && (!showImages || nextArticle.image_url) ? (
                 <View
                   style={{
                     position: 'relative',
                     width: '100%',
                     height: 175,
-                    borderTopLeftRadius: 25,
-                    borderTopRightRadius: 25,
+                    borderTopLeftRadius: 26,
+                    borderTopRightRadius: 26,
                     overflow: 'hidden',
                   }}
                 >
-                  <Image
-                    source={{ uri: nextArticle.image_url }}
-                    contentFit="cover"
-                    blurRadius={Platform.OS === 'web' ? 0 : 6}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      backgroundColor: '#F1EFEA',
-                      borderTopLeftRadius: 25,
-                      borderTopRightRadius: 25,
-                    }}
-                  />
+                  {showImages && nextArticle.image_url ? (
+                    <Image
+                      source={{ uri: nextArticle.image_url }}
+                      contentFit="cover"
+                      blurRadius={Platform.OS === 'web' ? 0 : 6}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        backgroundColor: '#F1EFEA',
+                        borderTopLeftRadius: 26,
+                        borderTopRightRadius: 26,
+                      }}
+                    />
+                  ) : (
+                    <TopicPatternBanner topic={nextArticle.topic} />
+                  )}
                   {nextArticle.topic ? (
                     <View
                       style={{
@@ -732,15 +772,17 @@ export function SwipeCardDeck({
                   }}
                 >
                   <View style={{ flexShrink: 1 }}>
-                    <View className="flex-row items-center justify-between gap-2 mb-2">
+                    <View className="flex-row items-center gap-2 mb-2 min-w-0">
                       <Text
                         className="text-[11.5px] font-medium text-stone-400 flex-shrink"
                         numberOfLines={1}
                       >
-                        {getSourceLabel(nextArticle) || 'News'}
-                      </Text>
-                      <Text className="text-[11.5px] font-medium text-stone-400">
-                        {formatEditionDate(nextArticle.date, 'short')}
+                        {[
+                          formatEditionDate(nextArticle.date, 'short'),
+                          getSourceLabel(nextArticle) || 'News',
+                        ]
+                          .filter(Boolean)
+                          .join(', ')}
                       </Text>
                     </View>
 
@@ -789,9 +831,14 @@ export function SwipeCardDeck({
                   bottom: 0,
                   borderRadius: 26,
                   overflow: 'hidden',
-                  backgroundColor: '#FFFFFF',
-                  borderWidth: 1,
-                  borderColor: 'rgba(231, 229, 224, 0.9)',
+                  backgroundColor:
+                    currentArticle.id === '__ftue_welcome__'
+                      ? '#fefaef'
+                      : '#FFFFFF',
+                  borderWidth: Platform.OS === 'web' ? 0 : 1,
+                  borderColor: 'rgba(28, 25, 23, 0.08)',
+                  boxShadow:
+                    '0 10px 26px -4px rgba(28, 25, 23, 0.18), 0 2px 6px rgba(28, 25, 23, 0.08), 0 0 0 1px rgba(28, 25, 23, 0.08)',
                   shadowColor: '#1C1917',
                   shadowOpacity: 0.1,
                   shadowRadius: 24,
@@ -799,102 +846,320 @@ export function SwipeCardDeck({
                 },
               ]}
             >
-              {currentArticle.image_url ? (
+              {currentArticle.id === '__ftue_welcome__' ? (
                 <View
                   style={{
-                    position: 'relative',
-                    width: '100%',
-                    height: compactImage ? 88 : 175,
+                    flex: 1,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 28,
                   }}
                 >
                   <Image
-                    source={{ uri: currentArticle.image_url }}
-                    contentFit="cover"
-                    transition={180}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      backgroundColor: '#F1EFEA',
-                    }}
+                    source={require('../../../assets/images/snappylit-logo-v2.png')}
+                    contentFit="contain"
+                    style={{ width: 96, height: 96, marginBottom: 20 }}
                   />
-                  {currentArticle.topic ? (
+                  <Text className="text-[22px] font-bold text-ink text-center tracking-[-0.35px] mb-2">
+                    Welcome curious reader!
+                  </Text>
+                  <Text className="text-[15px] leading-[22px] text-stone-600 text-center">
+                    Swipe to start reading
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {!showImages || currentArticle.image_url ? (
                     <View
                       style={{
-                        position: 'absolute',
-                        top: 12,
-                        left: 12,
-                        backgroundColor: 'rgba(28, 25, 23, 0.65)',
-                        borderRadius: 999,
-                        paddingHorizontal: 11,
-                        paddingVertical: 4,
+                        position: 'relative',
+                        width: '100%',
+                        height: compactImage ? 88 : 175,
                       }}
                     >
-                      <Text className="text-[11.5px] font-medium text-white">
-                        {currentArticle.topic}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-
-              <View
-                onLayout={(e) => {
-                  textAreaHeightRef.current = e.nativeEvent.layout.height - 40;
-                  checkTextOverflow();
-                }}
-                style={{
-                  flex: 1,
-                  padding: 20,
-                  overflow: 'hidden',
-                }}
-              >
-                <View
-                  onLayout={(e) => {
-                    textContentHeightRef.current = e.nativeEvent.layout.height;
-                    checkTextOverflow();
-                  }}
-                >
-                  {/* Eyebrow: Source (and subject pill fallback if no image) on left, Date on right */}
-                  <View className="flex-row items-center justify-between gap-2 mb-2">
-                    <View className="flex-row items-center gap-2 flex-1 min-w-0">
-                      {!currentArticle.image_url && currentArticle.topic ? (
-                        <View className="bg-stone-100 rounded-full px-2.5 py-0.5">
-                          <Text className="text-[11.5px] font-medium text-ink">
+                      {showImages && currentArticle.image_url ? (
+                        <Image
+                          source={{ uri: currentArticle.image_url }}
+                          contentFit="cover"
+                          transition={180}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            backgroundColor: '#F1EFEA',
+                          }}
+                        />
+                      ) : (
+                        <TopicPatternBanner topic={currentArticle.topic} />
+                      )}
+                      {activeTopic ? (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 12,
+                            left: 12,
+                            right: 12,
+                            zIndex: 10,
+                            backgroundColor: 'rgba(28, 25, 23, 0.72)',
+                            borderRadius: 999,
+                            paddingLeft: 14,
+                            paddingRight: 8,
+                            paddingVertical: 5,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                          }}
+                        >
+                          <Text
+                            className="text-[12px] font-medium text-white flex-shrink"
+                            numberOfLines={1}
+                          >
+                            {activeTopic} ({Math.min(currentIndex + 1, articles.length)}/
+                            {articles.length})
+                          </Text>
+                          <Pressable
+                            onPressIn={suppressNextFlip}
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              onClearTopic?.();
+                            }}
+                            accessibilityLabel="Clear topic filter"
+                            hitSlop={8}
+                            style={{
+                              width: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Text className="text-[11px] font-bold text-white leading-none">
+                              ✕
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : currentArticle.topic ? (
+                        <Pressable
+                          onPressIn={suppressNextFlip}
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            if (currentArticle.topic) {
+                              onSelectTopic?.(currentArticle.topic);
+                            }
+                          }}
+                          accessibilityLabel={`Filter by ${currentArticle.topic}`}
+                          hitSlop={6}
+                          style={{
+                            position: 'absolute',
+                            top: 12,
+                            left: 12,
+                            zIndex: 10,
+                            backgroundColor: 'rgba(28, 25, 23, 0.65)',
+                            borderRadius: 999,
+                            paddingHorizontal: 11,
+                            paddingVertical: 4,
+                          }}
+                        >
+                          <Text className="text-[11.5px] font-medium text-white">
                             {currentArticle.topic}
                           </Text>
-                        </View>
-                      ) : null}
-                      {sourceLabel ? (
-                        <Text
-                          className="text-[11.5px] font-medium text-stone-400 flex-shrink"
-                          numberOfLines={1}
-                        >
-                          {sourceLabel}
-                        </Text>
+                        </Pressable>
                       ) : null}
                     </View>
-                    <Text className="text-[11.5px] font-medium text-stone-400">
-                      {shortDate}
-                    </Text>
+                  ) : null}
+
+                  <View
+                    onLayout={(e) => {
+                      textAreaHeightRef.current = e.nativeEvent.layout.height - 40;
+                      checkTextOverflow();
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: 20,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <View
+                      onLayout={(e) => {
+                        textContentHeightRef.current = e.nativeEvent.layout.height;
+                        checkTextOverflow();
+                      }}
+                    >
+                      {showImages && !currentArticle.image_url && activeTopic ? (
+                        <View
+                          style={{
+                            backgroundColor: 'rgba(28, 25, 23, 0.85)',
+                            borderRadius: 999,
+                            paddingLeft: 14,
+                            paddingRight: 8,
+                            paddingVertical: 5,
+                            marginBottom: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                          }}
+                        >
+                          <Text
+                            className="text-[12px] font-medium text-white flex-shrink"
+                            numberOfLines={1}
+                          >
+                            {activeTopic} ({Math.min(currentIndex + 1, articles.length)}/
+                            {articles.length})
+                          </Text>
+                          <Pressable
+                            onPressIn={suppressNextFlip}
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              onClearTopic?.();
+                            }}
+                            accessibilityLabel="Clear topic filter"
+                            hitSlop={8}
+                            style={{
+                              width: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              backgroundColor: 'rgba(255, 255, 255, 0.18)',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Text className="text-[11px] font-bold text-white leading-none">
+                              ✕
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+
+                      {/* Eyebrow: Subject pill fallback (if no image and no active filter) + Date, Source on left */}
+                      <View className="flex-row items-center gap-2 mb-2 min-w-0">
+                        {showImages && !currentArticle.image_url && !activeTopic && currentArticle.topic ? (
+                          <Pressable
+                            onPressIn={suppressNextFlip}
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              if (currentArticle.topic) {
+                                onSelectTopic?.(currentArticle.topic);
+                              }
+                            }}
+                            accessibilityLabel={`Filter by ${currentArticle.topic}`}
+                            className="bg-stone-100 rounded-full px-2.5 py-0.5 active:opacity-75"
+                          >
+                            <Text className="text-[11.5px] font-medium text-ink">
+                              {currentArticle.topic}
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                        {shortDate || sourceLabel ? (
+                          <Text
+                            className="text-[11.5px] font-medium text-stone-400 flex-shrink"
+                            numberOfLines={1}
+                          >
+                            {[shortDate, sourceLabel].filter(Boolean).join(', ')}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      {/* Headline */}
+                      <Text
+                        className="text-[20px] leading-[26px] font-bold text-ink tracking-[-0.35px] mb-2.5"
+                        numberOfLines={3}
+                      >
+                        {currentArticle.ai_headline}
+                      </Text>
+
+                      {/* Summary */}
+                      <Text className="text-[15px] leading-[22px] text-stone-600">
+                        {currentArticle.ai_summary}
+                      </Text>
+                    </View>
                   </View>
 
-                  {/* Headline */}
-                  <Text
-                    className="text-[20px] leading-[26px] font-bold text-ink tracking-[-0.35px] mb-2.5"
-                    numberOfLines={3}
-                  >
-                    {currentArticle.ai_headline}
-                  </Text>
+                  {showOnboardingTips &&
+                    currentIndex === 1 &&
+                    !isFlipped &&
+                    !flipTipDismissed ? (
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        bottom: 18,
+                        left: 20,
+                        right: 20,
+                        alignItems: 'center',
+                        zIndex: 15,
+                      }}
+                    >
+                      <View
+                        style={{
+                          backgroundColor: '#fefaef',
+                          borderRadius: 999,
+                          paddingHorizontal: 14,
+                          paddingVertical: 7,
+                          borderWidth: 1,
+                          borderColor: 'rgba(28, 25, 23, 0.14)',
+                          boxShadow: '0 6px 16px rgba(28, 25, 23, 0.14)',
+                        }}
+                      >
+                        <Text className="text-[13px] font-medium text-ink">
+                          👆 Tap to flip cards
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
 
-                  {/* Summary */}
-                  <Text className="text-[15px] leading-[22px] text-stone-600">
-                    {currentArticle.ai_summary}
-                  </Text>
-                </View>
-              </View>
+                  {showOnboardingTips &&
+                    currentIndex === 2 &&
+                    !activeTopic &&
+                    currentArticle.topic &&
+                    !isFlipped &&
+                    !topicTipDismissed ? (
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        top: !showImages || currentArticle.image_url ? 42 : 44,
+                        left: 14,
+                        zIndex: 15,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <View
+                        style={{
+                          marginLeft: 14,
+                          width: 0,
+                          height: 0,
+                          borderLeftWidth: 7,
+                          borderRightWidth: 7,
+                          borderBottomWidth: 8,
+                          borderLeftColor: 'transparent',
+                          borderRightColor: 'transparent',
+                          borderBottomColor: '#fefaef',
+                        }}
+                      />
+                      <View
+                        style={{
+                          backgroundColor: '#fefaef',
+                          borderRadius: 14,
+                          paddingHorizontal: 12,
+                          paddingVertical: 7,
+                          borderWidth: 1,
+                          borderColor: 'rgba(28, 25, 23, 0.14)',
+                          boxShadow: '0 6px 16px rgba(28, 25, 23, 0.16)',
+                        }}
+                      >
+                        <Text className="text-[12.5px] font-medium text-ink">
+                          Tap here to focus on a subject
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+                </>
+              )}
             </Animated.View>
 
-            {/* BACK FACE (Insights + Quick Feedback + Read Source) */}
+            {/* BACK FACE (Why it matters + Quick Feedback + Read Source) */}
             <Animated.View
               pointerEvents={isFlipped ? 'auto' : 'none'}
               style={[
@@ -908,8 +1173,10 @@ export function SwipeCardDeck({
                   borderRadius: 26,
                   overflow: 'hidden',
                   backgroundColor: '#FAF9F6',
-                  borderWidth: 1,
-                  borderColor: 'rgba(231, 229, 224, 0.9)',
+                  borderWidth: Platform.OS === 'web' ? 0 : 1,
+                  borderColor: 'rgba(28, 25, 23, 0.08)',
+                  boxShadow:
+                    '0 10px 26px -4px rgba(28, 25, 23, 0.18), 0 2px 6px rgba(28, 25, 23, 0.08), 0 0 0 1px rgba(28, 25, 23, 0.08)',
                   shadowColor: '#1C1917',
                   shadowOpacity: 0.1,
                   shadowRadius: 24,
@@ -919,21 +1186,31 @@ export function SwipeCardDeck({
                 },
               ]}
             >
-              <Pressable onPress={toggleFlip} style={{ flex: 1 }}>
+              <View style={{ flex: 1 }}>
                 <View className="flex-row items-center justify-between gap-2 mb-4">
-                  <Text className="text-[17px] font-bold text-ink">
-                    💡 Insights
-                  </Text>
-                  <Text className="text-[11.5px] font-medium text-stone-400">
-                    {shortDate}
-                  </Text>
+                  <Pressable onPress={toggleFlip} className="active:opacity-70">
+                    <Text className="text-[17px] font-bold text-ink">
+                      💡 Why it matters
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openArticleUrl(currentArticle.original_url)}
+                    hitSlop={8}
+                    className="py-1 active:opacity-60"
+                  >
+                    <Text className="text-[13px] font-normal text-accent">
+                      Read source ↗
+                    </Text>
+                  </Pressable>
                 </View>
 
-                <Text className="text-[15.5px] leading-[24px] text-stone-700">
-                  {currentArticle.ai_explanation ||
-                    'Tap to return to the story.'}
-                </Text>
-              </Pressable>
+                <Pressable onPress={toggleFlip} style={{ flex: 1 }}>
+                  <Text className="text-[15.5px] leading-[24px] text-stone-700">
+                    {currentArticle.ai_explanation ||
+                      'Tap to return to the story.'}
+                  </Text>
+                </Pressable>
+              </View>
 
               <View className="gap-4">
                 {/* Quick Feedback */}
@@ -973,26 +1250,6 @@ export function SwipeCardDeck({
                       </Pressable>
                     </View>
                   )}
-                </View>
-
-                <View className="flex-row items-center justify-between pt-3 border-t border-stone-200/80">
-                  <Pressable
-                    onPress={() => openArticleUrl(currentArticle.original_url)}
-                    className="py-1 active:opacity-60"
-                  >
-                    <Text className="text-[13px] font-normal text-accent">
-                      Read source ↗
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={toggleFlip}
-                    className="py-1 active:opacity-60"
-                  >
-                    <Text className="text-[13px] font-medium text-ink">
-                      ← Back to story
-                    </Text>
-                  </Pressable>
                 </View>
               </View>
             </Animated.View>

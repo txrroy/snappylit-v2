@@ -79,7 +79,7 @@ export function buildSummarizerPrompt(
     'Tier 1 Policy Settings:',
     `- ai_headline: Clear, neutral, and around ${settings.target_headline_words} words. State what happened. No questions, no teasers, no exclamation marks.`,
     `- ai_summary: Simple, accurate language in 3 to 4 sentences (around ${settings.target_summary_words} words total).`,
-    `- ai_explanation: 2 to 3 short sentences explaining background context, institutions, or hard terms/places an adult reader would already know, in plain ${settings.reading_level} words.`,
+    `- ai_explanation: "Why it matters" in 2 to 3 short sentences for someone with zero background context—explain what led to this, who or what it affects in everyday life, and why it matters—in plain, calm, neutral, G-rated ${settings.reading_level} words (never tell the reader what to feel).`,
     `- Reading level: ${settings.reading_level}. If needed, explain 1 or 2 hard terms in plain words.`,
     sensitivityInstruction,
     '',

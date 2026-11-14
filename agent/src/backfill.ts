@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,8 +17,8 @@ import {
   loadActivePolicy,
   saveDraftArticles,
 } from './lib/firebase';
-import { sleep } from './lib/retry';
-import { buildInstructionsSnapshot } from './policy';
+import { sleep, withGeminiRetry } from './lib/retry';
+import { buildInstructionsSnapshot, LOCKED_CORE_RULES } from './policy';
 import type {
   ArticleDocument,
   FetchedArticle,
@@ -46,6 +46,9 @@ interface BackfillOptions {
   delayMs: number;
   outputFile: string;
   pushOnly: boolean;
+  upsert: boolean;
+  rewriteWhyItMatters: boolean;
+  startIndex: number;
 }
 
 interface GuardianItem {
@@ -92,6 +95,9 @@ function parseArgs(): BackfillOptions {
       getArg('--file=') || resolve(AGENT_DIR, 'backfill-articles.json')
     ),
     pushOnly: args.includes('--push-only'),
+    upsert: args.includes('--upsert'),
+    rewriteWhyItMatters: args.includes('--rewrite-why-it-matters'),
+    startIndex: Number(getArg('--start-index=') || 0),
   };
 }
 
@@ -287,11 +293,15 @@ async function runPushOnly(options: BackfillOptions) {
   }
 
   const db = initFirebaseAdmin();
-  const existingUrls = await getAllExistingArticleUrls(db);
-  const toSave = articles.filter((a) => !existingUrls.has(a.original_url));
+  const existingUrls = options.upsert
+    ? new Set<string>()
+    : await getAllExistingArticleUrls(db);
+  const toSave = options.upsert
+    ? articles
+    : articles.filter((a) => !existingUrls.has(a.original_url));
 
   console.log(
-    `Loaded ${articles.length} articles from ${options.outputFile} (${articles.length - toSave.length} already in Firestore).`
+    `Loaded ${articles.length} articles from ${options.outputFile} (${options.upsert ? 'upserting all' : `${articles.length - toSave.length} already in Firestore`}).`
   );
 
   if (toSave.length === 0) {
@@ -303,11 +313,109 @@ async function runPushOnly(options: BackfillOptions) {
   console.log(`Pushed ${saved} articles to Firestore without calling Gemini.`);
 }
 
+async function runRewriteWhyItMatters(options: BackfillOptions) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is required.');
+  }
+
+  const articles = loadCheckpoint(options.outputFile);
+  if (articles.length === 0) {
+    console.log(`No articles found in ${options.outputFile}. Nothing to rewrite.`);
+    return;
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const db = initFirebaseAdmin();
+  const activePolicy = await loadActivePolicy(db);
+  const readingLevel = activePolicy.settings.reading_level;
+
+  console.log(
+    `Rewriting "Why it matters" (ai_explanation) for ${articles.length} articles starting at index ${options.startIndex} (delay ${options.delayMs}ms)...`
+  );
+
+  let updated = 0;
+  for (let i = options.startIndex; i < articles.length; i++) {
+    const article = articles[i];
+    console.log(`[${i + 1}/${articles.length}] ${article.ai_headline}`);
+
+    try {
+      const response = await withGeminiRetry(
+        `Rewrite WhyItMatters (${i + 1}/${articles.length})`,
+        () =>
+          ai.models.generateContent({
+            model: PIPELINE_CONFIG.geminiModel,
+            contents: [
+              `You are a thoughtful educator explaining world news at a ${readingLevel} reading level so someone with zero background context can understand why a story matters.`,
+              'Write ONLY the "Why it matters" explanation (2 to 3 short sentences) in plain, calm, neutral, G-rated language.',
+              '- Explain what background led to this, who or what it affects in everyday life, and why it matters globally.',
+              '- Never tell the reader what to feel, never use loaded language, and never include graphic details.',
+              '- Stick strictly to facts supported by the headline, summary, and source text below.',
+              '',
+              ...LOCKED_CORE_RULES.slice(0, -1),
+              '',
+              `Headline: ${article.ai_headline}`,
+              `Summary: ${article.ai_summary}`,
+              article.source_text
+                ? `Source Text:\n${article.source_text.slice(0, PIPELINE_CONFIG.maxSourceChars)}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            config: {
+              abortSignal: AbortSignal.timeout(PIPELINE_CONFIG.llmTimeoutMs),
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  ai_explanation: { type: Type.STRING },
+                },
+                required: ['ai_explanation'],
+              },
+            },
+          })
+      );
+
+      const parsed = JSON.parse(response.text || '{}') as {
+        ai_explanation?: string;
+      };
+      const nextExplanation = parsed.ai_explanation?.trim();
+      if (!nextExplanation) {
+        console.warn(`  -> Empty response for ${article.id}, keeping existing.`);
+      } else {
+        article.ai_explanation = nextExplanation;
+        saveCheckpoint(options.outputFile, articles);
+        await db
+          .collection('articles')
+          .doc(article.id)
+          .set({ ai_explanation: nextExplanation }, { merge: true });
+        updated += 1;
+        console.log(`  -> Updated (${nextExplanation.slice(0, 70)}...)`);
+      }
+    } catch (err) {
+      console.error(`  -> Failed for ${article.id}:`, err);
+    }
+
+    if (i < articles.length - 1) {
+      await sleep(options.delayMs);
+    }
+  }
+
+  console.log(
+    `\nRewrite complete: updated ${updated}/${articles.length - options.startIndex} articles in ${options.outputFile} and Firestore.`
+  );
+}
+
 async function runBackfill() {
   const options = parseArgs();
 
   if (options.pushOnly) {
     await runPushOnly(options);
+    return;
+  }
+
+  if (options.rewriteWhyItMatters) {
+    await runRewriteWhyItMatters(options);
     return;
   }
 

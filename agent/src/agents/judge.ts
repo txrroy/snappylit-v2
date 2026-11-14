@@ -55,6 +55,7 @@ export async function judgeArticle(
             `Source was fallback RSS snippet only: ${article.usedFallbackSnippet}`,
             `Generated Headline: ${summary.ai_headline}`,
             `Generated Summary: ${summary.ai_summary}`,
+            `Generated Why It Matters: ${summary.ai_explanation}`,
             '',
             `Source Text:\n${article.fullText}`,
           ].join('\n'),
